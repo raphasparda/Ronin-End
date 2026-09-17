@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import Fastify, {
   type FastifyBaseLogger,
   type FastifyInstance,
+  type FastifyServerOptions,
   type RawReplyDefaultExpression,
   type RawRequestDefaultExpression,
   type RawServerDefault,
@@ -51,6 +52,22 @@ export const BODY_LIMIT_BYTES = 256 * 1024;
 
 export type Clock = () => Date;
 
+/**
+ * `TRUST_PROXY` (já validado) → `trustProxy` do Fastify. Booleano e lista de IPs/CIDRs passam
+ * direto. Número de saltos vira função: o Fastify 5 trata `trustProxy` numérico como "não confiar
+ * em nada" (fail-closed), e a semântica pedida é a do `proxy-addr`: confiar no socket e nos
+ * `hops - 1` endereços seguintes do `X-Forwarded-For` (da direita para a esquerda).
+ */
+export function fastifyTrustProxy(
+  value: Env['TRUST_PROXY'],
+): NonNullable<FastifyServerOptions['trustProxy']> {
+  if (typeof value === 'number') {
+    const hops = value;
+    return (_address, hop) => hop < hops;
+  }
+  return value;
+}
+
 declare module 'fastify' {
   interface FastifyInstance {
     /** Relógio da aplicação. Serviços usam `request.server.clock()` em vez de `new Date()`. */
@@ -96,7 +113,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   const app = Fastify({
     logger: buildLoggerOptions(env),
     bodyLimit: BODY_LIMIT_BYTES,
-    trustProxy: env.TRUST_PROXY,
+    trustProxy: fastifyTrustProxy(env.TRUST_PROXY),
     genReqId: () => randomUUID(),
     // Não confiar em id de requisição vindo do cliente.
     requestIdHeader: false,

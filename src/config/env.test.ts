@@ -50,6 +50,42 @@ describe('parseEnv', () => {
     expect(parseEnv({ ...base, TRUST_PROXY: 'false' }).TRUST_PROXY).toBe(false);
   });
 
+  describe('TRUST_PROXY', () => {
+    it.each([
+      ['true', true],
+      ['false', false],
+      [' true ', true],
+      ['1', 1],
+      ['2', 2],
+      ['127.0.0.1', ['127.0.0.1']],
+      ['10.0.0.0/8', ['10.0.0.0/8']],
+      ['10.0.0.0/8, 127.0.0.1 ,::1', ['10.0.0.0/8', '127.0.0.1', '::1']],
+      ['fd00::/8,192.168.0.0/16', ['fd00::/8', '192.168.0.0/16']],
+      ['loopback,uniquelocal', ['loopback', 'uniquelocal']],
+    ])('%j → %j', (value, expected) => {
+      expect(parseEnv({ ...base, TRUST_PROXY: value }).TRUST_PROXY).toEqual(expected);
+    });
+
+    it.each([
+      'yes',
+      'TRUE',
+      '0',
+      '101',
+      '1.5',
+      '-1',
+      '10.0.0.0/33',
+      '::1/129',
+      '10.0.0.0/8/1',
+      '10.0.0.0/',
+      '300.1.1.1',
+      'proxy.example.com',
+      '127.0.0.1,abc',
+      ',',
+    ])('rejeita %j', (value) => {
+      expect(issuesOf({ ...base, TRUST_PROXY: value })).toEqual(['TRUST_PROXY']);
+    });
+  });
+
   describe('SETUP_TOKEN', () => {
     it('opcional fora de produção', () => {
       expect(parseEnv(base).SETUP_TOKEN).toBeUndefined();
@@ -95,7 +131,6 @@ describe('parseEnv', () => {
     [{ PORT: 'abc' }, 'PORT'],
     [{ DATABASE_POOL_MAX: '0' }, 'DATABASE_POOL_MAX'],
     [{ DATABASE_POOL_MAX: '2.5' }, 'DATABASE_POOL_MAX'],
-    [{ TRUST_PROXY: 'yes' }, 'TRUST_PROXY'],
     [{ NODE_ENV: 'staging' }, 'NODE_ENV'],
     [{ LOG_LEVEL: 'verbose' }, 'LOG_LEVEL'],
   ])('rejeita %o', (override, variable) => {

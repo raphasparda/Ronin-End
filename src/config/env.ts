@@ -1,17 +1,59 @@
 import { existsSync } from 'node:fs';
+import { isIP } from 'node:net';
 import { dirname, join } from 'node:path';
 
 import { z } from 'zod';
 
 const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
 
-const booleanFromString = z
-  .enum(['true', 'false'], { error: 'Use "true" ou "false"' })
-  .transform((value) => value === 'true');
-
 /** Tamanho mínimo e máximo do `SETUP_TOKEN` (o corpo do setup aceita até 200 caracteres). */
 export const SETUP_TOKEN_MIN_LENGTH = 16;
 export const SETUP_TOKEN_MAX_LENGTH = 200;
+
+/** Nomes de faixas aceitos pelo `proxy-addr` (usado pelo `trustProxy` do Fastify). */
+const TRUST_PROXY_PRESETS = new Set(['loopback', 'linklocal', 'uniquelocal']);
+
+/** `true` se `value` é um IP (v4/v6), um CIDR válido ou um nome de faixa do `proxy-addr`. */
+export function isTrustedProxyEntry(value: string): boolean {
+  if (TRUST_PROXY_PRESETS.has(value)) return true;
+  const [address = '', prefix, ...rest] = value.split('/');
+  if (rest.length > 0) return false;
+  const version = isIP(address);
+  if (version === 0) return false;
+  if (prefix === undefined) return true;
+  if (!/^\d{1,3}$/.test(prefix)) return false;
+  return Number(prefix) <= (version === 4 ? 32 : 128);
+}
+
+/**
+ * `TRUST_PROXY` → valor do `trustProxy` do Fastify:
+ * - `true` / `false`: confia em qualquer proxy / em nenhum;
+ * - inteiro positivo (ex.: `1`): confia nesse número de saltos a partir do socket;
+ * - lista de IPs/CIDRs separados por vírgula (ex.: `10.0.0.0/8,127.0.0.1`): confia só neles.
+ */
+const trustProxySchema = z
+  .string()
+  .trim()
+  .transform((value, ctx): boolean | number | string[] => {
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    if (/^\d+$/.test(value)) {
+      const hops = Number(value);
+      if (hops >= 1 && hops <= 100) return hops;
+      ctx.addIssue({ code: 'custom', message: 'Número de saltos deve ser de 1 a 100' });
+      return z.NEVER;
+    }
+    const entries = value
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry !== '');
+    if (entries.length > 0 && entries.every(isTrustedProxyEntry)) return entries;
+    ctx.addIssue({
+      code: 'custom',
+      message: 'Use "true", "false", um número de saltos ou IPs/CIDRs separados por vírgula',
+    });
+    return z.NEVER;
+  });
 
 const postgresUrlSchema = z
   .url({ protocol: /^postgres(ql)?$/, error: 'URL PostgreSQL inválida (postgres://...)' })
@@ -40,7 +82,7 @@ export const envSchema = z
       .refine((value) => new URL(value).origin === value, {
         error: 'Informe só a origem, sem caminho nem barra final',
       }),
-    TRUST_PROXY: booleanFromString.default(false),
+    TRUST_PROXY: trustProxySchema.default(false),
     /**
      * Código exigido no `POST /api/setup` (api.md §4). Obrigatório em produção: sem ele, quem
      * chegar primeiro à instância vazia vira Admin.
