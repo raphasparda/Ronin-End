@@ -8,6 +8,17 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/). O
 
 Entrega das Fatias 0 a 9 do MVP, na branch `feat/mvp-fatias-2-9`. A Fatia 10 (produção em VPS, backup e revisão final) ainda está pendente: veja [`docs/ops/known-issues.md`](docs/ops/known-issues.md).
 
+### Fatia 11: cards restritos e capa do card (backend)
+
+- **Cards restritos** ([ADR 0015](docs/architecture/adr/0015-visibilidade-do-card-e-payload-bloqueado.md)): card com `visibility: 'team' | 'restricted'` e lista de acesso (`card_viewers`). Quem não tem acesso continua vendo o card no quadro **só com título e cadeado** (`LockedCard`) e recebe `403 CARD_RESTRICTED` em qualquer rota daquele card. Admin sempre vê tudo. A regra mora num arquivo só (`modules/cards/access.ts`) e entra dentro do `lockCard()`, que toda mutação de card, checklist, comentário, etiqueta e responsável já usava.
+- Rotas novas: `PUT /api/cards/:cardId/visibility` e `PUT|DELETE /api/cards/:cardId/viewers/:userId`. Restringir inclui o ator e os responsáveis atuais; atribuir alguém a um card restrito dá acesso na mesma transação; tirar o acesso de um responsável é recusado (RN32); anonimizar uma conta a tira de todas as listas (RN38).
+- "Meus cards" e as notificações (lista e contador de não lidas) **omitem** cards sem acesso, sem apagar nada: o acesso de volta traz a notificação de volta.
+- **Capa do card** ([ADR 0016](docs/architecture/adr/0016-capas-no-cloudflare-r2-com-urls-assinadas.md)): imagem enviada do computador direto para o Cloudflare R2 (bucket privado) em três passos — `POST /api/cards/:cardId/cover/upload-url`, `PUT` no R2 e `PUT /api/cards/:cardId/cover`, que confere o objeto (`HEAD` + 16 primeiros bytes) antes de gravar. `DELETE /api/cards/:cardId/cover` remove imagem e linha. JPEG, PNG, WebP e AVIF, até 5 MB.
+- Leitura por URL assinada de curta duração (10 a 15 min, arredondada em janelas de 5 min para o polling do quadro não invalidar o cache do navegador), gerada localmente: o payload do quadro continua em 6 consultas.
+- Cliente do R2 próprio (`src/lib/r2.ts`, SigV4 com `node:crypto` e `fetch`), sem SDK e sem dependência nova. Recurso **opcional e tudo ou nada**: sem as variáveis `R2_*`, `features.cardCovers` é `false`, `cover` sai `null` e as rotas de capa respondem `503 COVER_STORAGE_UNAVAILABLE` — o resto do app não muda.
+- Migration `0008_card_visibility_and_covers`: enum `card_visibility`, `cards.visibility` (todo card existente continua `team`), tabelas `card_viewers` e `card_covers` e cinco tipos novos de atividade.
+- Respostas de setup, login, aceite de convite e `auth/me` passam a trazer `features`.
+
 ### Deploy no Render e Neon
 
 - `render.yaml` (documental) do Web Service `ronin-api`: plano Free, região Virginia, Node 24, build com `pnpm build`, start com `pnpm start:prod` e health check em `/api/health`. Guia em [`docs/ops/deploy-render.md`](docs/ops/deploy-render.md): arquitetura com Static Site e rewrite de `/api/*`, Neon com `sslmode=require`, variáveis, primeiro acesso, limites do plano gratuito e a limitação do `TRUST_PROXY` atrás do proxy do Render.
