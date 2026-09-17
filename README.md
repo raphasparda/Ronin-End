@@ -1,244 +1,259 @@
 # Ronin API
 
-Backend do Ronin: quadros de tarefas para uma equipe pequena de software, com backend e dados próprios. Fastify 5 + PostgreSQL 18 + Drizzle, em TypeScript (Node 24).
+**Backend auto-hospedado de quadros de tarefas para equipes pequenas.**
 
-Este repositório (workspace pnpm) contém:
+[![CI](https://github.com/raphasparda/Ronin-End/actions/workflows/ci.yml/badge.svg)](https://github.com/raphasparda/Ronin-End/actions/workflows/ci.yml)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-24-5FA04E?logo=nodedotjs&logoColor=white)
+![Fastify](https://img.shields.io/badge/Fastify-5-000000?logo=fastify&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-18-4169E1?logo=postgresql&logoColor=white)
 
-- a **API** na raiz (`src/`, `test/`, `drizzle/`);
-- o pacote **`@raphasparda/ronin-shared`** (`packages/shared`): contratos Zod e regras de domínio usados pela API e pelo web, publicável no GitHub Packages;
-- o **PostgreSQL local de desenvolvimento** (`scripts/dev-db`), sem Docker e sem admin;
-- a documentação de produto, arquitetura e operação (`docs/`).
+> **English summary.** Ronin is a self-hosted, board-based task manager for small teams, in the spirit of Trello and ClickUp. This repository holds the REST API (Node 24, Fastify 5, PostgreSQL 18, Drizzle) and the shared Zod contracts package used by the [web client](https://github.com/raphasparda/Ronin-front). Highlights: Argon2id with httpOnly session cookies and CSRF checks, a race-free login throttle, fractional ordering with ordered row locks and concurrency tests, an append-only activity log enforced by a database trigger, and a zero-config local PostgreSQL for development. 745 automated tests. Documentation is in Brazilian Portuguese.
 
-O front-end (React + Vite) e os testes E2E ficam no repositório irmão **ronin-web**.
+O Ronin é um app de tarefas em quadros, no estilo Trello e ClickUp, para uma equipe pequena rodar no próprio servidor, com backend e dados próprios. Este repositório tem a **API REST** e o pacote de **contratos compartilhados** com o front.
 
-Público deste README: quem vai rodar, testar ou desenvolver o Ronin na própria máquina.
+- Front-end (React + Vite): [raphasparda/Ronin-front](https://github.com/raphasparda/Ronin-front)
+- Público deste README: quem avalia, roda ou desenvolve o projeto.
+
+## Sumário
+
+- [Destaques técnicos](#destaques-técnicos)
+- [Arquitetura](#arquitetura)
+- [Stack](#stack)
+- [Como rodar](#como-rodar)
+- [Scripts](#scripts)
+- [Testes](#testes)
+- [Estrutura do projeto](#estrutura-do-projeto)
+- [Documentação e API](#documentação-e-api)
+- [Status e roadmap](#status-e-roadmap)
+- [Autor](#autor)
+
+## Destaques técnicos
+
+Cada item aponta para o código ou o documento da decisão.
+
+**Segurança e autenticação**
+
+- **Senhas com Argon2id** (`@node-rs/argon2`) e **sessão em cookie `HttpOnly`**, com expiração ociosa e absoluta. Em produção, o cookie usa `Secure` e o prefixo `__Host-` ([`src/plugins/session.ts`](src/plugins/session.ts), [ADR 0002](docs/architecture/adr/0002-sessao-cookie-e-csrf.md), [ADR 0003](docs/architecture/adr/0003-argon2id-node-rs.md)).
+- **CSRF por `Origin` + header próprio**: toda mutação exige `Origin` igual ao `APP_ORIGIN` e o header `X-Kanban-Csrf: 1` ([`src/plugins/csrf.ts`](src/plugins/csrf.ts)).
+- **Bloqueio de login atômico, resistente a concorrência**: a tentativa é reservada num único `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` antes do Argon2. Um teste dispara 30 logins paralelos com senha errada e confere que no máximo 5 chegam à verificação ([`src/modules/auth`](src/modules/auth)).
+- **Links revogados quando um Admin perde o poder**: rebaixar, desativar ou anonimizar um Admin revoga, na mesma transação, os convites e links de redefinição pendentes criados por ele ([`src/modules/users/service.ts`](src/modules/users/service.ts)).
+- **Configuração estrita para produção**: a API não sobe com `NODE_ENV=production` e `APP_ORIGIN` em `http://`, nem com `APP_ORIGIN` em `https://` fora de produção ([`src/config/env.ts`](src/config/env.ts)).
+- **Logs sem dados sensíveis**: cookies, `authorization`, senhas e tokens são omitidos, e erros de banco saem sem valores de parâmetros ([`src/logger.ts`](src/logger.ts)).
+- **Anonimização de conta (LGPD)**: apaga e-mail e hash de senha de uma conta desativada e mantém cards, comentários e histórico como "Usuário removido". `CHECK`s no banco garantem o estado ([`docs/architecture/overview.md`](docs/architecture/overview.md)).
+
+**Dados e concorrência**
+
+- **Ordenação fracionária** (`fractional-indexing`): mover um card grava só a linha dele. Quando a chave passa de 64 caracteres, os irmãos são **rebalanceados em 2 etapas** (chaves temporárias, depois finais), sem violar o índice único ([`src/lib/ordering.ts`](src/lib/ordering.ts), [ADR 0004](docs/architecture/adr/0004-ordenacao-fractional-indexing.md)).
+- **Locks em ordem fixa** (quadro → lista → card → checklist/comentário) para evitar deadlock, com **testes de concorrência** no PostgreSQL real: 20 movimentos simultâneos geram posições únicas; 10 conclusões simultâneas do mesmo card geram um único evento; duas aceitações simultâneas do mesmo convite criam uma só conta.
+- **Histórico append-only**: a tabela de atividade dos cards recusa `UPDATE` e `DELETE` por trigger ([`drizzle/0004_card_activities_append_only.sql`](drizzle/0004_card_activities_append_only.sql)).
+
+**Contratos e ambiente**
+
+- **Contratos Zod compartilhados** entre API e web no pacote `@raphasparda/ronin-shared`, publicável no GitHub Packages por workflow (`publish-shared.yml`). As rotas validam entrada e resposta com esses schemas, que também geram o OpenAPI ([`packages/shared`](packages/shared), [ADR 0014](docs/architecture/adr/0014-dois-repositorios-e-shared-publicado.md)).
+- **PostgreSQL de desenvolvimento sem configuração**: `pnpm dev` sobe um PostgreSQL 18 do próprio projeto (pacote `embedded-postgres`), sem Docker, sem admin e sem instalar nada no sistema ([`scripts/dev-db`](scripts/dev-db)).
+
+## Arquitetura
+
+Monólito modular: cada módulo de `src/modules` tem rotas, serviço e repositório. Em produção, SPA e API ficam na mesma origem, atrás do Caddy ([ADR 0009](docs/architecture/adr/0009-deploy-mesma-origem-caddy.md)).
+
+```mermaid
+flowchart LR
+    subgraph web["ronin-web (Ronin-front)"]
+        SPA["SPA React 19<br/>TanStack Query"]
+    end
+    subgraph api["ronin-api (este repositório)"]
+        API["API Fastify 5<br/>auth, boards, cards, ..."]
+        SHARED["@raphasparda/ronin-shared<br/>schemas Zod e regras de domínio"]
+    end
+    DB[("PostgreSQL 18<br/>Drizzle ORM")]
+
+    SPA -- "HTTP /api<br/>cookie de sessão + CSRF" --> API
+    API -- "SQL em transação" --> DB
+    SHARED -. "contratos" .-> API
+    SHARED -. "contratos (GitHub Packages)" .-> SPA
+```
+
+Modelo de dados, segurança e deploy planejado: [`docs/architecture/overview.md`](docs/architecture/overview.md).
+
+## Stack
+
+| Camada       | Tecnologia                                                 |
+| ------------ | ---------------------------------------------------------- |
+| Runtime      | Node.js 24, TypeScript 5.9, pnpm 10 (workspace)            |
+| HTTP         | Fastify 5, `fastify-type-provider-zod`, Helmet, rate limit |
+| Banco        | PostgreSQL 18, Drizzle ORM, migrations SQL versionadas     |
+| Contratos    | Zod 4 (`@raphasparda/ronin-shared`)                        |
+| Autenticação | Argon2id (`@node-rs/argon2`), sessão em cookie             |
+| Documentação | OpenAPI (`@fastify/swagger` + Swagger UI)                  |
+| Testes       | Vitest 5 contra PostgreSQL real                            |
+| Qualidade    | ESLint, Prettier, GitHub Actions                           |
+| Build        | tsup                                                       |
 
 ## Como rodar
 
-Precisa só de **Node.js 24** e **pnpm 10** (`npm i -g pnpm@10`, sem admin). Não precisa de Docker, de PostgreSQL instalado nem de senha nenhuma.
+**Pré-requisitos:** Node.js 24 e pnpm 10 (`npm i -g pnpm@10`). Não precisa de Docker nem de PostgreSQL instalado. Os comandos funcionam no PowerShell (Windows), no Linux e no macOS.
 
-Os dois repositórios ficam lado a lado na mesma pasta, com os nomes de pasta `ronin-api` e `ronin-web` (o web usa `../ronin-api`):
+1. Clone os dois repositórios lado a lado, com estes nomes de pasta (o web procura `../ronin-api`):
 
-```powershell
-git clone https://github.com/raphasparda/Ronin-End.git ronin-api
-git clone https://github.com/raphasparda/Ronin-front.git ronin-web
-```
+   ```powershell
+   git clone https://github.com/raphasparda/Ronin-End.git ronin-api
+   git clone https://github.com/raphasparda/Ronin-front.git ronin-web
+   ```
 
-```text
-<pasta>/
-├─ ronin-api/   (este: raphasparda/Ronin-End)
-└─ ronin-web/   (raphasparda/Ronin-front)
-```
+2. Suba a API no primeiro terminal:
 
-1. Neste repositório: `pnpm install` e `pnpm dev`.
-2. Em outro terminal, no ronin-web: `pnpm install` e `pnpm dev`.
-3. Abra <http://127.0.0.1:5310>.
+   ```powershell
+   cd ronin-api
+   pnpm install
+   pnpm dev
+   ```
 
-Instale o ronin-api primeiro: o ronin-web liga o `@raphasparda/ronin-shared` direto desta pasta (`link:../ronin-api/packages/shared`).
+   O `pnpm dev` cria o `.env` a partir do `.env.example`, sobe o PostgreSQL local na porta 5433 (dados em `.data/postgres`), aplica as migrations e inicia a API em watch na porta 3000. Confira em <http://127.0.0.1:3000/api/health>. **Ctrl+C** derruba tudo, inclusive o banco.
 
-O `pnpm dev` daqui cria o `.env` (se não existir), sobe um PostgreSQL 18 local do próprio projeto na porta 5433 (dados em `.data/postgres`), aplica as migrations pendentes e então sobe a API em watch na porta 3000 (<http://127.0.0.1:3000/api/health>). **Ctrl+C** derruba tudo, inclusive o banco. A primeira execução leva alguns segundos a mais para criar o banco.
+3. Suba o web no segundo terminal:
 
-O web roda na porta **5310** (a 5173 é de outro projeto na máquina do cliente) e faz proxy de `/api` para `127.0.0.1:3000`. A API só aceita mutações com `Origin` igual ao `APP_ORIGIN` (`http://127.0.0.1:5310`); por isso o servidor de dev do web redireciona `localhost:5310` para `127.0.0.1:5310`.
+   ```powershell
+   cd ronin-web
+   pnpm install
+   pnpm dev
+   ```
 
-Detalhes, problemas comuns e como zerar o banco: [`docs/ops/setup-local.md`](docs/ops/setup-local.md). Problemas conhecidos (travamentos do Node no Windows, bloqueios de login em testes): [`docs/ops/known-issues.md`](docs/ops/known-issues.md).
+4. Abra <http://127.0.0.1:5310>. Com o banco vazio, a primeira tela é **Configurar a equipe**: a primeira conta vira Admin.
 
-## Status
+Instale o ronin-api antes do ronin-web: o web usa o pacote de contratos direto desta pasta (`link:../ronin-api/packages/shared`).
 
-- **Fatias 0 a 9 do MVP: implementadas**, com testes de API, de componentes e E2E (Playwright, no ronin-web), e CI no GitHub Actions nos dois repositórios.
-- **Fatia 10 (produção): pendente.** Ainda não existem Dockerfile, Caddyfile, compose de produção, backup nem documentação de instalação na VPS. Não exponha esta versão na internet. Os bloqueios de segurança apontados para o deploy estão em [`docs/ops/known-issues.md`](docs/ops/known-issues.md#4-bloqueios-do-deploy-fatia-10).
-- Há uma decisão de produto pendente sobre o bloqueio de login por e-mail (mesmo documento).
-- Divisão do monorepo em ronin-api e ronin-web: [ADR 0014](docs/architecture/adr/0014-dois-repositorios-e-shared-publicado.md).
+<details>
+<summary><strong>Primeiro uso: convites e redefinição de senha</strong></summary>
 
-Histórico de entregas: [`CHANGELOG.md`](CHANGELOG.md).
-
-## O que o Ronin faz hoje
-
-### Equipe e acesso
-
-- Configuração inicial da instância: a primeira pessoa cria a equipe e vira Admin.
-- Login e logout com e-mail e senha. Bloqueio temporário após tentativas erradas.
-- Convite por link (vale 7 dias, uso único), com e-mail opcional e papel (Admin ou Membro). Não há cadastro público.
-- Redefinição de senha por link gerado pelo Admin (vale 24 h, uso único), sem e-mail.
-- Administração de membros: mudar papel, desativar, reativar e anonimizar conta desativada (LGPD). Sempre existe pelo menos um Admin ativo.
-- Perfil: trocar o próprio nome e a senha.
-- Nome da equipe e fuso horário ajustáveis pelo Admin.
-
-### Quadros e listas
-
-- Todos os membros veem e editam todos os quadros.
-- Quadro novo já vem com "A fazer", "Fazendo" e "Concluído" (esta marcada como lista de conclusão).
-- Listas com cor de uma paleta fixa: criar, renomear, trocar cor, reordenar (arrastando ou pelo menu), arquivar e restaurar.
-- Arquivar e restaurar quadros. Só o Admin exclui um quadro de vez, digitando o nome para confirmar.
-
-### Cards
-
-- Criação rápida: digite o título no fim da lista e aperte Enter.
-- Arrastar e soltar entre listas e dentro delas, ou "Mover para…" (quadro, lista e posição), que funciona pelo teclado e no celular.
-- Detalhe do card com título, descrição em Markdown (sem HTML cru) e histórico de atividade.
-- Concluir e reabrir: pelo botão ou movendo para a lista de conclusão. Reabrir um card que está na lista de conclusão leva ele ao topo da primeira lista ativa.
-- Arquivar e restaurar cards. Só o Admin exclui um card de vez.
-
-### Campos do card
-
-- Responsáveis (um ou mais membros ativos).
-- Prazo com data e hora opcional, com estado "vencendo" (até 24 h), "atrasado" ou "concluído".
-- Prioridade opcional: Baixa, Média, Alta ou Urgente, sempre com cor e texto.
-- Etiquetas por quadro, com nome e cor da paleta.
-- Filtro do quadro por responsável, etiqueta, prioridade, prazo e texto do título. O filtro fica na URL e vale só para quem filtrou.
-
-### Checklists e comentários
-
-- Vários checklists por card, com itens marcáveis e reordenáveis. O progresso (x/y) aparece na face do card. Marcar todos os itens não conclui o card.
-- Comentários em Markdown. O autor edita (marca "editado") e exclui os próprios. O Admin exclui qualquer um.
-
-### Notificações
-
-- Sino no cabeçalho com contador de não lidas.
-- Avisos quando alguém atribui você a um card e quando comentam em um card em que você é responsável. Ninguém é notificado da própria ação.
-- Clicar abre o card e marca como lida. Há "marcar todas como lidas".
-- Só dentro do app: sem e-mail e sem push.
-
-### Meus cards
-
-- Todos os cards abertos atribuídos a você, em todos os quadros, agrupados em Atrasados, Vencendo (24 h), Com prazo e Sem prazo.
-- Ordem por prazo e depois por prioridade. Cada item mostra quadro e lista de origem.
-
-### Temas e uso no celular
-
-- Tema claro (padrão) e escuro, alternados pelo botão no cabeçalho. A escolha fica salva no navegador.
-- Layout responsivo com navegação inferior no celular. Arrastar e soltar é garantido só no desktop.
-
-Não há tempo real: o quadro recarrega a cada 30 s, ao voltar para a aba e depois de cada ação. Escopo completo e o que ficou para depois: [`docs/product/scope.md`](docs/product/scope.md).
-
-## Primeiro uso
-
-### 1. Criar o primeiro Admin
-
-Com o banco vazio e o web rodando (ronin-web, `pnpm dev`), <http://127.0.0.1:5310> abre a tela **Configurar a equipe**. Preencha nome da equipe, seu nome, e-mail, senha (mínimo 10 caracteres, diferente do e-mail) e fuso horário, e clique em **Criar conta e começar**. Essa conta é Admin, e a tela de configuração não aparece mais para ninguém.
-
-O envio desse formulário tem limite de 5 tentativas a cada 15 minutos por IP (veja [`docs/ops/known-issues.md`](docs/ops/known-issues.md#3-limites-de-requisição-que-aparecem-em-testes)).
-
-### 2. Convidar pessoas
+**Convidar pessoas**
 
 1. No cabeçalho, abra **Administração** → aba **Convites** → **Novo convite**.
 2. Informe o e-mail (opcional; se preencher, só esse e-mail usa o convite) e o papel.
-3. Clique em **Criar convite** e copie o **Link do convite**. O link aparece uma única vez.
+3. Clique em **Criar convite** e copie o **Link do convite**. Ele aparece uma única vez e vale 7 dias.
 4. Envie o link por um canal privado. A pessoa abre o link, informa nome, e-mail e senha e já entra logada.
 
-Para testar sozinho na mesma máquina, abra o link em uma **janela anônima** ou em outro navegador. Aceitar o convite na janela em que o Admin está logado troca a sessão para a conta nova.
+Para testar sozinho, abra o link numa janela anônima: aceitar o convite na janela do Admin troca a sessão para a conta nova.
 
-Em desenvolvimento, os links usam `http://127.0.0.1:5310`, então só funcionam na própria máquina.
-
-### 3. Redefinir a senha de alguém (sem e-mail)
+**Redefinir a senha de alguém (sem e-mail)**
 
 1. **Administração** → aba **Membros**.
-2. No menu de ações (três pontos) da pessoa, clique em **Gerar link de redefinição de senha**.
-3. Copie o link e envie por um canal privado. Ele vale 24 h e só pode ser usado uma vez.
-4. A pessoa abre o link e define a nova senha. Todas as sessões antigas dela são encerradas.
+2. No menu de ações da pessoa, clique em **Gerar link de redefinição de senha**.
+3. Envie o link por um canal privado. Ele vale 24 h, é de uso único e encerra as sessões antigas da pessoa.
 
-Gerar um novo link cancela o anterior. Quem sabe a própria senha troca em **Meu perfil** (menu do usuário, no canto do cabeçalho).
+</details>
 
-## Comandos úteis
+<details>
+<summary><strong>Alternativas de banco: Docker ou PostgreSQL nativo</strong></summary>
 
-Rode na raiz do repositório (PowerShell ou qualquer terminal).
-
-| Comando                             | Faz                                                                        |
-| ----------------------------------- | -------------------------------------------------------------------------- |
-| `pnpm dev`                          | banco local (5433), migrations e API em watch (3000)                       |
-| `pnpm dev:api`                      | só a API em watch (banco por sua conta)                                    |
-| `pnpm db:dev`                       | só o banco local, em primeiro plano (Ctrl+C para parar)                    |
-| `pnpm db:migrate`                   | aplica as migrations pendentes em `DATABASE_URL` (idempotente)             |
-| `pnpm db:generate`                  | gera migration a partir do schema (drizzle-kit)                            |
-| `pnpm db:up` / `pnpm db:down`       | sobe/derruba o Postgres do `docker-compose.yml` (alternativa com Docker)   |
-| `pnpm test`                         | testes do shared (com cobertura) e da API (sobe o banco local se precisar) |
-| `pnpm test:api`                     | só os testes da API                                                        |
-| `pnpm lint` / `pnpm lint:fix`       | ESLint                                                                     |
-| `pnpm typecheck`                    | TypeScript da API e do shared                                              |
-| `pnpm format` / `pnpm format:check` | Prettier                                                                   |
-| `pnpm build`                        | `dist/` do shared (ESM + `.d.ts`) e `dist/server.js` da API                |
-| `pnpm start`                        | roda o build da API (`node dist/server.js`)                                |
-| `pnpm shared:pack`                  | gera o tarball publicável do `@raphasparda/ronin-shared` (só `dist/`)      |
-
-Os E2E rodam no ronin-web (`pnpm test:e2e` lá), que usa este repositório para subir o banco `kanban_e2e`, aplicar as migrations e iniciar a API na porta 3100 (web na 5320).
-
-## Banco de dados
-
-### Padrão: PostgreSQL local do projeto (sem Docker, sem admin)
-
-O pacote npm `embedded-postgres` traz os binários oficiais do PostgreSQL 18 para Windows, Linux e macOS. Os scripts do repositório criam e controlam um cluster só deste projeto:
-
-- endereço `127.0.0.1:5433` (não conflita com um Postgres nativo na 5432), usuário/senha `kanban`/`kanban` (**somente desenvolvimento**);
-- bancos `kanban` (app) e `kanban_test` (testes), criados se faltarem; `kanban_e2e` é criado pelo `pnpm test:e2e` do ronin-web;
-- dados em `.data/postgres` e log em `.data/postgres.log` (pasta ignorada pelo git).
-
-Se o banco já estiver respondendo no `DATABASE_URL` (por exemplo, `pnpm db:dev` em outro terminal, Docker ou Postgres nativo), o `pnpm dev` reaproveita e não o derruba ao sair. Antes de subir a API, o `pnpm dev` sempre aplica as migrations pendentes.
-
-### Alternativa: Docker
+**Docker**
 
 ```powershell
 pnpm db:up     # sobe postgres:18-alpine na porta POSTGRES_PORT (5433 no .env.example)
 pnpm db:down   # para e remove o container (os dados ficam no volume)
 ```
 
-Não rode junto com o banco local: os dois usam a 5433. Com o container de pé, o `pnpm dev` detecta e reaproveita. O banco `kanban_test` é criado por `infra/postgres/init/01-test-db.sql` apenas na primeira subida do volume.
+Não rode junto com o banco local: os dois usam a 5433. Com o container de pé, o `pnpm dev` detecta e reaproveita. O banco `kanban_test` é criado por `infra/postgres/init/01-test-db.sql` só na primeira subida do volume.
 
-### Alternativa: PostgreSQL nativo
+**PostgreSQL nativo**
 
-Exige a senha do superusuário `postgres`. Com o PostgreSQL 18 rodando na 5432, execute uma vez, na raiz do repositório:
+Exige a senha do superusuário `postgres`. Com o PostgreSQL 18 na porta 5432, rode uma vez na raiz do repositório (PowerShell):
 
 ```powershell
 & "C:\Program Files\PostgreSQL\18\bin\psql.exe" -h 127.0.0.1 -U postgres -d postgres -f infra/postgres/local-setup.sql
 ```
 
-O script é idempotente: cria o role `kanban` (senha `kanban`) e os bancos `kanban` e `kanban_test`. Depois, troque a porta para **5432** em `DATABASE_URL` e `TEST_DATABASE_URL` no `.env`.
+No Linux ou macOS, use o `psql` do `PATH` com os mesmos argumentos. O script é idempotente: cria o role `kanban` (senha `kanban`, só para desenvolvimento) e os bancos `kanban` e `kanban_test`. Depois, troque a porta para **5432** em `DATABASE_URL` e `TEST_DATABASE_URL` no `.env`.
+
+</details>
+
+Portas, problemas comuns e como zerar o banco: [`docs/ops/setup-local.md`](docs/ops/setup-local.md).
+
+## Scripts
+
+Rode na raiz do repositório.
+
+| Comando                             | O que faz                                                                  |
+| ----------------------------------- | -------------------------------------------------------------------------- |
+| `pnpm dev`                          | banco local (5433), migrations e API em watch (3000)                       |
+| `pnpm dev:api`                      | só a API em watch (banco por sua conta)                                    |
+| `pnpm db:dev`                       | só o banco local, em primeiro plano (Ctrl+C para parar)                    |
+| `pnpm db:migrate`                   | aplica as migrations pendentes em `DATABASE_URL` (idempotente)             |
+| `pnpm db:generate`                  | gera migration a partir do schema (drizzle-kit)                            |
+| `pnpm db:up` / `pnpm db:down`       | sobe/derruba o PostgreSQL do `docker-compose.yml`                          |
+| `pnpm test`                         | testes do shared (com cobertura) e da API (sobe o banco local se precisar) |
+| `pnpm test:api`                     | só os testes da API                                                        |
+| `pnpm lint` / `pnpm lint:fix`       | ESLint                                                                     |
+| `pnpm typecheck`                    | TypeScript da API e do shared                                              |
+| `pnpm format` / `pnpm format:check` | Prettier                                                                   |
+| `pnpm build`                        | `dist/` do shared (ESM + `.d.ts`) e `dist/server.js` da API                |
+| `pnpm start`                        | roda o build da API                                                        |
+| `pnpm shared:pack`                  | gera o tarball publicável do `@raphasparda/ronin-shared`                   |
 
 ## Testes
 
-`pnpm test` roda os testes do `@raphasparda/ronin-shared` (cobertura mínima de 95% em `domain/`) e depois os da API. Os testes de integração da API usam `TEST_DATABASE_URL`: se ele não responder e apontar para `127.0.0.1`, o setup global do Vitest (`test/global-setup.ts`) sobe o banco local sozinho e o para no final. Em seguida aplica as migrations em `kanban_test`; testes de banco usam `useTestDatabase()` (`test/db.ts`), que trunca as tabelas antes de cada teste. Se o `pnpm dev` ou o `pnpm db:dev` já estiverem rodando, o banco é reaproveitado.
+```powershell
+pnpm test
+```
 
-CI (GitHub Actions: lint, typecheck, testes, build e verificação do pacote): [`docs/ops/ci.md`](docs/ops/ci.md).
+Última execução local (17/09/2026), todos passando:
 
-## Pacote `@raphasparda/ronin-shared`
+| Suíte                       | Arquivos | Testes  | Observação                                                 |
+| --------------------------- | -------- | ------- | ---------------------------------------------------------- |
+| `@raphasparda/ronin-shared` | 17       | 351     | schemas e regras de domínio; cobertura de 100% das linhas  |
+| API                         | 45       | 394     | integração com `app.inject` e PostgreSQL real, e unitários |
+| **Total**                   | **62**   | **745** |                                                            |
 
-- Aqui dentro, a API usa a fonte TS pelo workspace (`workspace:*`); nada a buildar no dia a dia.
-- O ronin-web usa `link:../ronin-api/packages/shared` localmente, ou a versão publicada no GitHub Packages.
-- Publicação: tag `shared-v<versão>` dispara `.github/workflows/publish-shared.yml`.
-- O escopo `@raphasparda` é o dono dos repositórios no GitHub (exigência do GitHub Packages); o `.npmrc` já aponta esse escopo para `https://npm.pkg.github.com`. Se o dono mudar: `node scripts/rename-shared-package.mjs @<novo-dono>/ronin-shared --web ../ronin-web`.
+- O mínimo de cobertura exigido no shared é 95% em `domain/`.
+- As rotas são testadas para sucesso, 401, CSRF, validação, 404, permissões e conflitos (409), além das regras de negócio e dos cenários de concorrência.
+- O setup global do Vitest ([`test/global-setup.ts`](test/global-setup.ts)) sobe o PostgreSQL local se ele não estiver rodando e aplica as migrations no banco `kanban_test`. Os testes de banco truncam as tabelas antes de cada caso.
+- Os testes de banco leem `TEST_DATABASE_URL` do `.env`, criado pelo `pnpm dev`. Num clone novo, rode `pnpm dev` uma vez ou copie o `.env.example` para `.env`: sem a variável, esses testes são pulados.
+- Os testes E2E (Playwright + axe) ficam no [ronin-web](https://github.com/raphasparda/Ronin-front) e sobem esta API numa porta própria.
 
-Passo a passo (renomear, publicar, trocar o web para a versão do registro com `.npmrc` e token): [`docs/ops/shared-package.md`](docs/ops/shared-package.md).
+CI no GitHub Actions: lint, typecheck, testes com PostgreSQL de serviço, build e verificação do pacote ([`docs/ops/ci.md`](docs/ops/ci.md)).
 
-## Estrutura de pastas
+## Estrutura do projeto
 
 ```text
-src/               API Fastify: módulos, plugins, config e schema do banco
-test/              setup global do Vitest (banco), helpers de app, login e fixtures
-drizzle/           migrations SQL geradas (commitadas)
-packages/shared/   @raphasparda/ronin-shared: contratos Zod e regras de domínio (publicável)
-scripts/           pnpm dev, pnpm db:dev, PostgreSQL local e renomeação do pacote shared
-infra/postgres/    scripts SQL das alternativas Docker e Postgres nativo
+src/
+  modules/         um módulo por área: auth, boards, lists, cards, checklists, comments, ...
+  plugins/         sessão, CSRF, erros, headers de segurança, rate limit, OpenAPI
+  db/              schema Drizzle, cliente e migrador
+  lib/             ordenação fracionária, datas, tokens, senhas
+  config/          leitura e validação do ambiente
+test/              setup global do Vitest, helpers de app, login e fixtures
+drizzle/           migrations SQL geradas e revisadas
+packages/shared/   @raphasparda/ronin-shared: schemas Zod e regras de domínio
+scripts/           pnpm dev, PostgreSQL local e renomeação do pacote shared
+infra/postgres/    SQL das alternativas Docker e PostgreSQL nativo
 docs/              produto, arquitetura (ADRs) e operação
 ```
 
-## Documentação
+## Documentação e API
 
-| Documento                                                        | Conteúdo                                                           |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------ |
-| [`docs/product/scope.md`](docs/product/scope.md)                 | escopo do MVP, histórias, regras de negócio, fora de escopo        |
-| [`docs/architecture/overview.md`](docs/architecture/overview.md) | arquitetura, modelo de dados, segurança, deploy planejado          |
-| [`docs/architecture/api.md`](docs/architecture/api.md)           | contrato da API REST e decisões de implementação (§18)             |
-| [`docs/architecture/plan.md`](docs/architecture/plan.md)         | plano de implementação por fatias                                  |
-| [`docs/architecture/adr/`](docs/architecture/adr/)               | decisões de arquitetura (ADRs)                                     |
-| [`docs/ops/setup-local.md`](docs/ops/setup-local.md)             | ambiente local em detalhe e problemas comuns                       |
-| [`docs/ops/ci.md`](docs/ops/ci.md)                               | pipelines do GitHub Actions                                        |
-| [`docs/ops/shared-package.md`](docs/ops/shared-package.md)       | build, escopo, publicação e consumo do `@raphasparda/ronin-shared` |
-| [`docs/ops/known-issues.md`](docs/ops/known-issues.md)           | problemas conhecidos, limites e pendências do deploy               |
+Com a API rodando em desenvolvimento, a documentação **OpenAPI interativa** fica em <http://127.0.0.1:3000/api/docs>. Em produção ela fica desligada.
 
-Design (cores, tokens, telas) fica no ronin-web (`docs/design/`).
+| Documento                                                        | Conteúdo                                                    |
+| ---------------------------------------------------------------- | ----------------------------------------------------------- |
+| [`docs/product/scope.md`](docs/product/scope.md)                 | escopo do MVP, histórias, regras de negócio, fora de escopo |
+| [`docs/architecture/overview.md`](docs/architecture/overview.md) | arquitetura, modelo de dados, segurança, deploy planejado   |
+| [`docs/architecture/api.md`](docs/architecture/api.md)           | contrato da API REST e decisões de implementação            |
+| [`docs/architecture/plan.md`](docs/architecture/plan.md)         | plano de implementação por fatias                           |
+| [`docs/architecture/adr/`](docs/architecture/adr/)               | decisões de arquitetura (ADRs)                              |
+| [`docs/ops/setup-local.md`](docs/ops/setup-local.md)             | ambiente local em detalhe e problemas comuns                |
+| [`docs/ops/ci.md`](docs/ops/ci.md)                               | pipelines do GitHub Actions                                 |
+| [`docs/ops/shared-package.md`](docs/ops/shared-package.md)       | build, publicação e consumo do `@raphasparda/ronin-shared`  |
+| [`docs/ops/known-issues.md`](docs/ops/known-issues.md)           | problemas conhecidos e pendências do deploy                 |
+| [`CHANGELOG.md`](CHANGELOG.md)                                   | histórico de entregas                                       |
 
-Com a API rodando em desenvolvimento, a documentação OpenAPI interativa fica em <http://127.0.0.1:3000/api/docs> (ou <http://127.0.0.1:5310/api/docs> pelo proxy do web).
+Design (cores, tokens e telas) fica no ronin-web, em `docs/design/`.
 
-## Convenções
+## Status e roadmap
 
-- Finais de linha LF (`.gitattributes`, `.editorconfig`). Scripts do `package.json` não usam sintaxe de shell POSIX, para funcionar no PowerShell.
-- `.env` nunca é commitado; toda variável nova entra no `.env.example` com comentário.
-- Mudança de contrato: altere `docs/architecture/api.md` e `packages/shared` no mesmo PR; publique nova versão do shared se o web consumir pelo registro.
+- **Fatias 0 a 9 do MVP: implementadas.** Equipe e acesso, quadros e listas coloridas, cards com responsáveis, etiquetas, prazo e prioridade, checklists, comentários, notificações, Meus cards e anonimização.
+- **Fatia 10, produção em VPS: pendente.** Imagem Docker da API, Caddy com HTTPS automático e headers de segurança, banco sem porta publicada, backup fora da VPS com restauração testada e volta após reboot ([`plan.md`](docs/architecture/plan.md)).
+- Ainda não exponha esta versão na internet: os bloqueios do deploy e a decisão pendente sobre o bloqueio de login por e-mail estão em [`docs/ops/known-issues.md`](docs/ops/known-issues.md).
+
+## Autor
+
+**Raphael Sparda** · SPARDA.dev · [github.com/raphasparda](https://github.com/raphasparda)
