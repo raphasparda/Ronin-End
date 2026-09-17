@@ -1,7 +1,17 @@
 import { sql } from 'drizzle-orm';
-import { check, index, integer, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import {
+  check,
+  index,
+  integer,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core';
 
-import { users } from './users';
+import { userRole, users } from './users';
 
 const tstz = (name: string) => timestamp(name, { withTimezone: true, mode: 'date' });
 
@@ -45,5 +55,65 @@ export const authThrottle = pgTable(
   ],
 );
 
+export const authTokenKind = pgEnum('auth_token_kind', ['invite', 'password_reset']);
+
+/**
+ * Convites e links de redefinição de senha (overview.md §6.5, ADR 0008). Só o SHA-256 do token é
+ * gravado. Consumo atômico: `UPDATE ... WHERE token_hash = $1 AND used_at IS NULL AND
+ * revoked_at IS NULL AND expires_at > now() RETURNING *`.
+ * Dado pessoal (LGPD): `email` do convite. A anonimização apaga os tokens cujo alvo é o usuário.
+ */
+export const authTokens = pgTable(
+  'auth_tokens',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    kind: authTokenKind('kind').notNull(),
+    /** SHA-256 (hex minúsculo) do token do link. */
+    tokenHash: text('token_hash').notNull(),
+    /** Convite: e-mail opcional (se preenchido, o aceite exige esse e-mail). Normalizado. */
+    email: text('email'),
+    /** Convite: papel da conta criada (obrigatório). */
+    role: userRole('role'),
+    /** Redefinição: usuário alvo (obrigatório). */
+    targetUserId: uuid('target_user_id').references(() => users.id, { onDelete: 'restrict' }),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    expiresAt: tstz('expires_at').notNull(),
+    usedAt: tstz('used_at'),
+    /** Convite: conta criada no aceite. Redefinição: o próprio alvo. */
+    usedByUserId: uuid('used_by_user_id').references(() => users.id, { onDelete: 'restrict' }),
+    revokedAt: tstz('revoked_at'),
+    createdAt: tstz('created_at').notNull().defaultNow(),
+  },
+  (t) => [
+    // Lookup e consumo pelo hash do token recebido no corpo.
+    uniqueIndex('auth_tokens_token_hash_unique').on(t.tokenHash),
+    // Revogar resets pendentes do usuário, anonimização (apaga tokens alvo) e a FK.
+    index('auth_tokens_target_user_id_idx')
+      .on(t.targetUserId)
+      .where(sql`${t.targetUserId} IS NOT NULL`),
+    check('auth_tokens_token_hash_sha256_check', sql`${t.tokenHash} ~ '^[0-9a-f]{64}$'`),
+    // Convite: exige papel; não tem alvo.
+    check(
+      'auth_tokens_invite_check',
+      sql`${t.kind} <> 'invite' OR (${t.role} IS NOT NULL AND ${t.targetUserId} IS NULL)`,
+    ),
+    // Redefinição: exige alvo; não tem papel nem e-mail.
+    check(
+      'auth_tokens_password_reset_check',
+      sql`${t.kind} <> 'password_reset' OR (${t.targetUserId} IS NOT NULL AND ${t.role} IS NULL AND ${t.email} IS NULL)`,
+    ),
+    check(
+      'auth_tokens_email_normalized_check',
+      sql`${t.email} = lower(btrim(${t.email})) AND char_length(${t.email}) BETWEEN 3 AND 254`,
+    ),
+    // `used_by_user_id` só depois do consumo (pode ser gravado depois de `used_at`, na mesma transação).
+    check('auth_tokens_used_by_check', sql`${t.usedByUserId} IS NULL OR ${t.usedAt} IS NOT NULL`),
+  ],
+);
+
 export type SessionRow = typeof sessions.$inferSelect;
 export type AuthThrottleRow = typeof authThrottle.$inferSelect;
+export type AuthTokenRow = typeof authTokens.$inferSelect;
+export type NewAuthTokenRow = typeof authTokens.$inferInsert;

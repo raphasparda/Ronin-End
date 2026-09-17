@@ -3,6 +3,7 @@
 > Status: v1.1 (2026-09-16). Autor: Raphael Sparda.
 > v1.2: alinhado ao `scope.md` v2: sem gamificação; cor por lista (paleta fixa); prioridade do card; reabrir vai para o topo; operação em VPS (banco fechado, backup fora da VPS, volta após reboot).
 > v1.3: CSP restrita na API e `no-store` em toda resposta (§6.7); `text/plain` recusado com `415 UNSUPPORTED_MEDIA_TYPE` (§6.3).
+> v1.4: §5 implementado para as fatias 2–9 (migrations `0001`–`0007`): FK composta de I6, `CHECK`s extras, trigger append-only da atividade e índices de FK para cascatas (§5.1.1).
 > Fonte de requisitos: `docs/product/scope.md` (inclui "Decisões confirmadas pelo cliente").
 > Documentos irmãos: `api.md` (contrato REST), `plan.md` (plano de implementação), `adr/` (decisões).
 
@@ -266,7 +267,7 @@ Convenções:
 - Tabelas e colunas em `snake_case`; TS em `camelCase` (mapeado pelo Drizzle).
 - PK `uuid DEFAULT gen_random_uuid()` (exceto onde indicado). Datas `timestamptz`, sempre UTC.
 - `position` usa o customType `textC` (DDL `text COLLATE "C"`), obrigatório para a ordenação binária das chaves fracionárias. No JS, comparar posições com `<`/`>`, **nunca** `localeCompare`.
-- Usuários **nunca** são excluídos (apenas desativados/anonimizados), então FKs para `users` são `ON DELETE RESTRICT`.
+- Usuários **nunca** são excluídos (apenas desativados/anonimizados), então FKs para `users` são `ON DELETE RESTRICT` (violação: SQLSTATE `23001`, não `23503`).
 - Enums como `pgEnum`.
 
 Enums: `user_role ('admin','member')`, `user_status ('active','deactivated')`, `auth_token_kind ('invite','password_reset')`, `card_status ('open','completed')`, `palette_color ('gray','red','orange','yellow','green','cyan','blue','purple','magenta')` (ordem do enum = ordem da paleta; usado por listas e etiquetas; valores visuais em tokens CSS, ADR 0012), `card_priority ('low','medium','high','urgent')`, `notification_type ('card_assigned','card_commented')`, `activity_type` (lista na seção 5.3).
@@ -311,16 +312,18 @@ Enums: `user_role ('admin','member')`, `user_status ('active','deactivated')`, `
 |--------|------|-------|
 | id | uuid PK | |
 | kind | auth_token_kind | |
-| token_hash | text not null | `UNIQUE`; SHA-256 hex |
-| email | text null | convite: e-mail opcional (se preenchido, o aceite exige esse e-mail) |
-| role | user_role null | convite: obrigatório (`CHECK`) |
-| target_user_id | uuid FK users null | redefinição: obrigatório (`CHECK`) |
+| token_hash | text not null | `UNIQUE` (`auth_tokens_token_hash_unique`); SHA-256 hex (`CHECK ~ '^[0-9a-f]{64}$'`) |
+| email | text null | convite: e-mail opcional (se preenchido, o aceite exige esse e-mail); normalizado como `users.email` (`CHECK`) |
+| role | user_role null | convite: obrigatório; redefinição: nulo (`CHECK`) |
+| target_user_id | uuid FK users null | redefinição: obrigatório; convite: nulo (`CHECK`) |
 | created_by | uuid FK users not null | |
 | expires_at | timestamptz not null | convite +7 dias; reset +24h |
 | used_at | timestamptz null | |
-| used_by_user_id | uuid FK users null | |
+| used_by_user_id | uuid FK users null | só com `used_at` preenchido (`CHECK`; pode ser gravado depois, na mesma transação) |
 | revoked_at | timestamptz null | |
-| created_at | timestamptz | |
+| created_at | timestamptz not null | default now() |
+
+`CHECK`s: `auth_tokens_invite_check`, `auth_tokens_password_reset_check` (redefinição também sem `email`), `auth_tokens_email_normalized_check`, `auth_tokens_used_by_check`, `auth_tokens_token_hash_sha256_check`. Índice parcial `auth_tokens_target_user_id_idx (target_user_id) WHERE target_user_id IS NOT NULL`.
 
 **auth_throttle**
 | coluna | tipo | regra |
@@ -338,7 +341,7 @@ Sem índice além da PK: toda leitura/escrita do login é por `key`; a limpeza d
 | id | uuid PK | |
 | name | text not null | 1–100 |
 | archived_at | timestamptz null | |
-| created_by | uuid FK users | |
+| created_by | uuid FK users not null | |
 | created_at, updated_at | timestamptz | |
 
 **lists**
@@ -353,50 +356,63 @@ Sem índice além da PK: toda leitura/escrita do login é por `key`; a limpeza d
 | archived_at | timestamptz null | |
 | created_at, updated_at | timestamptz | |
 
-Índices: `UNIQUE (board_id, position) WHERE archived_at IS NULL`; `UNIQUE (board_id) WHERE is_done_list`.
+Índices: `UNIQUE (board_id, position) WHERE archived_at IS NULL`; `UNIQUE (board_id) WHERE is_done_list`; `(board_id)`; `UNIQUE (id, board_id)` (alvo da FK composta de `cards`). `CHECK`s: nome 1–100, `position <> ''`, `NOT (is_done_list AND archived_at IS NOT NULL)` (arquivar exige desmarcar no mesmo `UPDATE`).
 
 **cards**
 | coluna | tipo | regra |
 |--------|------|-------|
 | id | uuid PK | |
 | board_id | uuid FK boards | `ON DELETE CASCADE`; índice |
-| list_id | uuid FK lists | `ON DELETE CASCADE` |
-| title | text not null | 1–500 |
+| list_id | uuid not null | FK composta `(list_id, board_id) → lists (id, board_id)` `ON DELETE CASCADE` (`cards_list_board_fk`): garante I6 no banco; mover entre quadros atualiza as duas colunas no mesmo `UPDATE` |
+| title | text not null | 1–500, sem `\r`/`\n` |
 | description | text not null | default `''`; até 20.000 (Markdown) |
 | position | textC not null | |
 | status | card_status not null | default `open` |
 | completed_at | timestamptz null | |
 | completed_by | uuid FK users null | |
 | due_at | timestamptz null | |
-| due_has_time | boolean not null | default false |
+| due_has_time | boolean not null | default false; `true` exige `due_at` (`CHECK`) |
 | priority | card_priority null | `null` = sem prioridade (padrão). Não afeta `position` (RN16). |
 | archived_at | timestamptz null | |
 | created_by | uuid FK users | |
 | created_at, updated_at | timestamptz | |
 
-Índices: `UNIQUE (list_id, position) WHERE archived_at IS NULL`; `(board_id)`; `(due_at) WHERE status = 'open' AND archived_at IS NULL`. `CHECK ((status = 'completed') = (completed_at IS NOT NULL AND completed_by IS NOT NULL))`.
+Índices: `UNIQUE (list_id, position) WHERE archived_at IS NULL`; `(board_id)`; `(list_id)`; `(due_at) WHERE status = 'open' AND archived_at IS NULL`. `CHECK cards_completion_check`: `(status = 'completed' AND completed_at IS NOT NULL AND completed_by IS NOT NULL) OR (status = 'open' AND completed_at IS NULL AND completed_by IS NULL)` (reabrir limpa os dois campos).
 
 **card_assignees**: `card_id` (FK cascade), `user_id` (FK), `assigned_by` (FK), `created_at`. PK `(card_id, user_id)`; índice `(user_id)`.
 
-**labels**: `id`, `board_id` (FK cascade), `name` text 1–50, `color` palette_color, `created_at`. Índice `(board_id)`.
+**labels**: `id`, `board_id` (FK cascade), `name` text 1–50, `color` palette_color not null, `created_at`, `updated_at`. Índice `(board_id)`.
 
 **card_labels**: `card_id` (FK cascade), `label_id` (FK cascade). PK `(card_id, label_id)`; índice `(label_id)`.
 
-**checklists**: `id`, `card_id` (FK cascade), `title` 1–200, `created_at`. Ordem: `created_at, id`.
+**checklists**: `id`, `card_id` (FK cascade), `title` 1–200, `created_at`, `updated_at`. Ordem: `created_at, id`. Índice `(card_id, created_at, id)`.
 
-**checklist_items**: `id`, `checklist_id` (FK cascade), `text` 1–500, `position` textC, `is_checked` bool default false, `checked_by` uuid FK null, `checked_at` null, `created_at`, `updated_at`. `UNIQUE (checklist_id, position)`.
+**checklist_items**: `id`, `checklist_id` (FK cascade), `text` 1–500, `position` textC, `is_checked` bool default false, `checked_by` uuid FK null, `checked_at` null, `created_at`, `updated_at`. `UNIQUE (checklist_id, position)`. `CHECK`: marcado ⇔ `checked_by` e `checked_at` preenchidos.
 
 **comments**: `id`, `card_id` (FK cascade), `author_id` (FK), `body` 1–10.000 (Markdown), `edited_at` null, `created_at`. Índice `(card_id, created_at)`.
 
-**card_activities**: `id`, `card_id` (FK cascade), `board_id` (FK cascade), `actor_id` (FK), `type` activity_type, `data` jsonb not null default `'{}'`, `created_at`. Índice `(card_id, created_at)`.
+**card_activities**: `id`, `card_id` (FK cascade), `board_id` (FK cascade), `actor_id` (FK), `type` activity_type, `data` jsonb not null default `'{}'` (`CHECK jsonb_typeof = 'object'`), `created_at`. Índices `(card_id, created_at)` e `(board_id)`. Trigger `card_activities_append_only` recusa `UPDATE` (SQLSTATE `23001`); `DELETE` só pelas cascatas.
 
-**notifications**: `id`, `user_id` (destinatário, FK), `type` notification_type, `card_id` (FK cascade), `actor_id` (FK), `comment_id` (FK comments `ON DELETE SET NULL`) null, `read_at` null, `created_at`. Índices `(user_id, created_at DESC)`, `(user_id) WHERE read_at IS NULL`.
+**notifications**: `id`, `user_id` (destinatário, FK), `type` notification_type, `card_id` (FK cascade), `actor_id` (FK), `comment_id` (FK comments `ON DELETE SET NULL`) null, `read_at` null, `created_at`. Índices `(user_id, created_at DESC)`, `(user_id) WHERE read_at IS NULL`, `(card_id)`, `(comment_id) WHERE comment_id IS NOT NULL`. `CHECK`s: `user_id <> actor_id` (RN18) e `type = 'card_commented' OR comment_id IS NULL`.
 
 Ordenação por prioridade (Meus cards): `urgent` > `high` > `medium` > `low` > `null`, via `CASE` na consulta (mesmo ranking exportado por `packages/shared/src/domain/priority.ts` para o front).
 
 ### 5.1.1 Implementado: diagrama ER e índices
 
-Schema Drizzle em `apps/api/src/db/schema/` (`workspace.ts`, `users.ts`, `auth.ts`); SQL em `apps/api/drizzle/`. Estado atual (migration `0000_auth_core`, tarefa 1.2):
+Schema Drizzle em `apps/api/src/db/schema/` (`workspace.ts`, `users.ts`, `auth.ts`, `boards.ts`, `cards.ts`, `labels.ts`, `checklists.ts`, `comments.ts`, `notifications.ts`, todos exportados por `index.ts`); SQL em `apps/api/drizzle/`. Todas as tabelas do MVP (fatias 1–9) já existem:
+
+| Migration | Tarefa | Conteúdo |
+|-----------|--------|----------|
+| `0000_auth_core` | 1.2 | `workspace`, `users`, `sessions`, `auth_throttle` |
+| `0001_auth_tokens` | 2.2 | enum `auth_token_kind`; `auth_tokens` |
+| `0002_boards_lists` | 3.2 | enum `palette_color`; `boards`, `lists` |
+| `0003_cards_activities` | 4.2 | enums `card_status`, `activity_type`; `cards`, `card_activities` |
+| `0004_card_activities_append_only` | 4.2 | trigger que recusa `UPDATE` em `card_activities` (SQL customizado via `drizzle-kit generate --custom`) |
+| `0005_assignees_labels_priority` | 5.2 | enum `card_priority`; `cards.priority`; `card_assignees`, `labels`, `card_labels` |
+| `0006_checklists_comments` | 6.2 | `checklists`, `checklist_items`, `comments` |
+| `0007_notifications` | 7.2 | enum `notification_type`; `notifications` |
+
+As fatias 8 e 9 não têm migration: a conclusão usa as colunas de 4.2 e "Meus cards" usa `card_assignees_user_id_idx`.
 
 ```mermaid
 erDiagram
@@ -404,8 +420,6 @@ erDiagram
     smallint id PK "CHECK id = 1"
     text name
     text timezone
-    timestamptz created_at
-    timestamptz updated_at
   }
   users {
     uuid id PK
@@ -415,25 +429,138 @@ erDiagram
     user_role role
     user_status status
     timestamptz anonymized_at
-    timestamptz password_changed_at
-    timestamptz created_at
-    timestamptz updated_at
   }
   sessions {
     text id PK "sha256 hex do token"
     uuid user_id FK
-    timestamptz created_at
-    timestamptz last_seen_at
     timestamptz idle_expires_at
     timestamptz absolute_expires_at
   }
   auth_throttle {
     text key PK "email:... ou ip:..."
     integer failures
-    timestamptz window_started_at
     timestamptz locked_until
   }
-  users ||--o{ sessions : "ON DELETE CASCADE"
+  auth_tokens {
+    uuid id PK
+    auth_token_kind kind
+    text token_hash UK "sha256 hex"
+    text email "convite, opcional"
+    user_role role "convite"
+    uuid target_user_id FK "reset"
+    uuid created_by FK
+    uuid used_by_user_id FK
+    timestamptz expires_at
+    timestamptz used_at
+    timestamptz revoked_at
+  }
+  boards {
+    uuid id PK
+    text name
+    uuid created_by FK
+    timestamptz archived_at
+  }
+  lists {
+    uuid id PK
+    uuid board_id FK
+    text name
+    textC position
+    boolean is_done_list "0..1 por quadro"
+    palette_color color
+    timestamptz archived_at
+  }
+  cards {
+    uuid id PK
+    uuid board_id FK
+    uuid list_id FK "FK composta com board_id"
+    text title
+    text description
+    textC position
+    card_status status
+    timestamptz completed_at
+    uuid completed_by FK
+    timestamptz due_at
+    boolean due_has_time
+    card_priority priority "nula"
+    uuid created_by FK
+    timestamptz archived_at
+  }
+  card_activities {
+    uuid id PK
+    uuid card_id FK
+    uuid board_id FK
+    uuid actor_id FK
+    activity_type type
+    jsonb data
+    timestamptz created_at
+  }
+  card_assignees {
+    uuid card_id PK,FK
+    uuid user_id PK,FK
+    uuid assigned_by FK
+  }
+  labels {
+    uuid id PK
+    uuid board_id FK
+    text name
+    palette_color color
+  }
+  card_labels {
+    uuid card_id PK,FK
+    uuid label_id PK,FK
+  }
+  checklists {
+    uuid id PK
+    uuid card_id FK
+    text title
+    timestamptz created_at
+  }
+  checklist_items {
+    uuid id PK
+    uuid checklist_id FK
+    text text
+    textC position
+    boolean is_checked
+    uuid checked_by FK
+    timestamptz checked_at
+  }
+  comments {
+    uuid id PK
+    uuid card_id FK
+    uuid author_id FK
+    text body
+    timestamptz edited_at
+  }
+  notifications {
+    uuid id PK
+    uuid user_id FK "destinatário"
+    notification_type type
+    uuid card_id FK
+    uuid actor_id FK
+    uuid comment_id FK "SET NULL"
+    timestamptz read_at
+  }
+  users ||--o{ sessions : "CASCADE"
+  users ||--o{ auth_tokens : "RESTRICT"
+  users ||--o{ boards : "cria (RESTRICT)"
+  boards ||--o{ lists : "CASCADE"
+  boards ||--o{ cards : "CASCADE"
+  lists ||--o{ cards : "CASCADE (list_id, board_id)"
+  boards ||--o{ labels : "CASCADE"
+  boards ||--o{ card_activities : "CASCADE"
+  cards ||--o{ card_activities : "CASCADE"
+  users ||--o{ card_activities : "ator (RESTRICT)"
+  cards ||--o{ card_assignees : "CASCADE"
+  users ||--o{ card_assignees : "RESTRICT"
+  cards ||--o{ card_labels : "CASCADE"
+  labels ||--o{ card_labels : "CASCADE"
+  cards ||--o{ checklists : "CASCADE"
+  checklists ||--o{ checklist_items : "CASCADE"
+  cards ||--o{ comments : "CASCADE"
+  users ||--o{ comments : "autor (RESTRICT)"
+  users ||--o{ notifications : "destinatário (RESTRICT)"
+  cards ||--o{ notifications : "CASCADE"
+  comments |o--o{ notifications : "SET NULL"
 ```
 
 | Índice | Consulta que justifica |
@@ -444,10 +571,42 @@ erDiagram
 | `sessions_pkey (id)` | lookup da sessão pelo hash do cookie a cada request |
 | `sessions_user_id_idx (user_id)` | `DELETE FROM sessions WHERE user_id = $1` (troca/redefinição de senha, desativação, anonimização) e a própria FK em cascata |
 | `auth_throttle_pkey (key)` | leitura/upsert do contador por e-mail e por IP no login |
+| `auth_tokens_token_hash_unique (token_hash)` | lookup e consumo atômico do convite/reset pelo hash |
+| `auth_tokens_target_user_id_idx (target_user_id) WHERE NOT NULL` | revogar resets pendentes do usuário; anonimização apaga os tokens alvo |
+| `lists_board_position_active_unique (board_id, position) WHERE archived_at IS NULL` | I5; payload do quadro (`board_id = $1 AND archived_at IS NULL ORDER BY position`); `computePosition` |
+| `lists_board_done_list_unique (board_id) WHERE is_done_list` | I4/RN06; "qual é a lista de conclusão do quadro" (move/complete) |
+| `lists_board_id_idx (board_id)` | `GET /boards/:id/archived` (listas arquivadas) e cascata de `DELETE boards` (o parcial não cobre arquivadas) |
+| `lists_id_board_id_unique (id, board_id)` | alvo obrigatório da FK composta `cards_list_board_fk` (I6) |
+| `cards_list_position_active_unique (list_id, position) WHERE archived_at IS NULL` | I5; `computePosition` de cards; ordenação por lista |
+| `cards_board_id_idx (board_id)` | payload do quadro (500 cards em 0,7 ms medido), arquivados do quadro, cascata |
+| `cards_list_id_idx (list_id)` | verificação/cascata da FK composta (inclui arquivados); concluir abertos da lista ao marcá-la como de conclusão |
+| `cards_due_at_open_idx (due_at) WHERE status = 'open' AND archived_at IS NULL` | consultas por prazo de cards abertos (Meus cards, alertas) |
+| `card_activities_card_id_created_at_idx (card_id, created_at)` | `GET /cards/:id/activity` e cascata ao excluir card |
+| `card_activities_board_id_idx (board_id)` | cascata de `DELETE boards` (sem ele, varredura da maior tabela do sistema) |
+| `card_assignees_pkey (card_id, user_id)` | payload/detalhe (`card_id = ANY(...)`), idempotência do `PUT`, cascata do card |
+| `card_assignees_user_id_idx (user_id)` | Meus cards (`user_id = $me`); 3.360 atribuições em 10.000 cards: 5 ms medido |
+| `labels_board_id_idx (board_id)` | payload do quadro e cascata |
+| `card_labels_pkey (card_id, label_id)` | payload/detalhe, idempotência, cascata do card |
+| `card_labels_label_id_idx (label_id)` | excluir etiqueta remove de todos os cards (cascata) |
+| `checklists_card_id_created_at_idx (card_id, created_at, id)` | detalhe (ordem de criação), contagem `checklist {done,total}` do payload, cascata |
+| `checklist_items_checklist_position_unique (checklist_id, position)` | I5; itens ordenados; `computePosition`; cascata |
+| `comments_card_id_created_at_idx (card_id, created_at)` | detalhe em ordem cronológica, `commentCount`, cascata |
+| `notifications_user_id_created_at_idx (user_id, created_at DESC)` | listagem com cursor `before` |
+| `notifications_user_id_unread_idx (user_id) WHERE read_at IS NULL` | contador de não lidas (polling 60 s) e "ler todas" |
+| `notifications_card_id_idx (card_id)` | cascata ao excluir card/quadro |
+| `notifications_comment_id_idx (comment_id) WHERE NOT NULL` | `ON DELETE SET NULL` ao excluir comentário |
 
-Não criados de propósito: índice em `sessions.idle_expires_at`/`absolute_expires_at` e em `auth_throttle.window_started_at` (só a limpeza diária usa; tabelas pequenas). Reavaliar com `EXPLAIN (ANALYZE, BUFFERS)` se a limpeza ficar lenta.
+Não criados de propósito: índices em `sessions.idle_expires_at`/`absolute_expires_at`, `auth_throttle.window_started_at`, `auth_tokens.expires_at` e `notifications.read_at` (só a limpeza diária usa); índices em FKs para `users` (`created_by`, `completed_by`, `actor_id`, `author_id`, `checked_by`, `assigned_by`, `used_by_user_id`), porque usuários nunca são excluídos; índice em `boards.name` (poucos quadros). Reavaliar com `EXPLAIN (ANALYZE, BUFFERS)` se algo ficar lento. O teste `catalog.test.ts` falha se surgir FK (exceto para `users`) sem índice.
 
-Infra: `db/client.ts` (`createPool` com `max` = `DATABASE_POOL_MAX`, `createDb` = `drizzle()` com o schema), `db/types.ts` (`textC`, `createdAt`, `updatedAt`), `db/migrate.ts` (`runMigrations(url)` com advisory lock; CLI `pnpm db:migrate`). Testes: `test/global-setup.ts` migra `TEST_DATABASE_URL`; `test/db.ts` expõe `describeDb`, `useTestDatabase()` (`truncateAll()` antes de cada teste) e `pgErrorOf()`.
+Integridade reforçada no banco (além do mínimo descrito acima): FK composta de I6; `CHECK` de conclusão nos dois sentidos; lista de conclusão nunca arquivada; `due_has_time` exige `due_at`; título sem quebra de linha; item marcado ⇔ autor/data; notificação nunca para o próprio ator (RN18); campos de convite e reset mutuamente exclusivos; trigger append-only na atividade.
+
+Observações para o backend:
+- Rebalanceamento (ADR 0004): os índices únicos de posição não são `DEFERRABLE`, e o PostgreSQL checa unicidade linha a linha, até dentro de um único `UPDATE`. Regravar os irmãos pode colidir com uma chave antiga ainda presente. Faça em duas etapas na mesma transação (primeiro chaves temporárias garantidamente distintas, ex. `'~' || id`, depois as finais).
+- Aceite de convite: `used_by_user_id` pode ser gravado depois de `used_at` na mesma transação (o `CHECK` só exige `used_at` quando `used_by_user_id` existe).
+- Arquivar a lista de conclusão exige `is_done_list = false` no mesmo `UPDATE`.
+- Mover card entre quadros: `list_id` e `board_id` no mesmo `UPDATE` (a FK composta recusa o contrário).
+
+Infra: `db/client.ts` (`createPool` com `max` = `DATABASE_POOL_MAX`, `createDb` = `drizzle()` com o schema), `db/types.ts` (`textC`, `createdAt`, `updatedAt`), `db/migrate.ts` (`runMigrations(url)` com advisory lock; CLI `pnpm db:migrate`). Testes: `test/global-setup.ts` migra `TEST_DATABASE_URL`; `test/db.ts` expõe `describeDb`, `useTestDatabase()` (`truncateAll()` antes de cada teste; descobre tabelas novas sozinho), `pgErrorOf()` e `pgError()`; `src/db/test-fixtures.ts` tem inserções mínimas usadas pelos testes de schema (`src/db/schema/*.test.ts`).
 
 ### 5.2 Ciclo de vida e exclusões
 

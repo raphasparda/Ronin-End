@@ -84,3 +84,18 @@ export function pgErrorOf(err: unknown): { code?: string; constraint?: string } 
   }
   return {};
 }
+
+/**
+ * Espera que `promise` falhe com erro do PostgreSQL e devolve `{ code, constraint }`.
+ * Lança se a operação passar (o teste quebra com mensagem clara).
+ */
+export async function pgError(
+  promise: PromiseLike<unknown>,
+): Promise<{ code?: string; constraint?: string }> {
+  try {
+    await promise;
+  } catch (err) {
+    return pgErrorOf(err);
+  }
+  throw new Error('era esperado erro do PostgreSQL');
+}

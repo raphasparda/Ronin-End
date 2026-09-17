@@ -1,6 +1,6 @@
 # Kanban: contrato da API REST (MVP)
 
-> Status: v1.3 (2026-09-16; v1.2 alinhou ao `scope.md` v2: sem gamificação, cor por lista, prioridade do card, reabrir para o topo; v1.3 adicionou `415 UNSUPPORTED_MEDIA_TYPE`). Complementa `overview.md`. Os schemas Zod em `packages/shared/src/schemas/` são a fonte da verdade em código e devem refletir exatamente este documento. Mudança de contrato = atualizar este arquivo no mesmo PR.
+> Status: v1.3 (2026-09-16; v1.2 alinhou ao `scope.md` v2: sem gamificação, cor por lista, prioridade do card, reabrir para o topo; v1.3 adicionou `415 UNSUPPORTED_MEDIA_TYPE`; v1.4 (2026-09-17) fechou ambiguidades ao implementar os schemas das Fatias 2 a 9, ver §18). Complementa `overview.md`. Os schemas Zod em `packages/shared/src/schemas/` são a fonte da verdade em código e devem refletir exatamente este documento. Mudança de contrato = atualizar este arquivo no mesmo PR.
 
 ## 1. Convenções
 
@@ -80,8 +80,9 @@ type CardDetail = CardSummary & {
   comments: Comment[];          // ordem cronológica crescente
 };
 
-type Activity = { id: Uuid; cardId: Uuid; actorId: Uuid; type: ActivityType; data: Record<string, unknown>; createdAt: IsoDateTime };
-// ActivityType e formato de data: overview.md §5.3
+// União discriminada por `type`: cada tipo tem seu formato de `data` (overview.md §5.3).
+type Activity = { id: Uuid; cardId: Uuid; actorId: Uuid; type: ActivityType; data: ActivityData[type]; createdAt: IsoDateTime };
+// card_due_changed.data.hasTime = dueHasTime do novo prazo (false quando `to` é null)
 
 // Resultado de mutações que podem concluir/reabrir
 type CardMutationResult = {
@@ -130,7 +131,7 @@ Envelope: `{ "error": { "code": ErrorCode, "message": string, "details"?: { path
 | 409 | `CANNOT_TARGET_SELF` | Admin desativando/anonimizando/rebaixando a si mesmo |
 | 409 | `USER_NOT_DEACTIVATED` | anonimizar usuário ativo |
 | 409 | `USER_ANONYMIZED` | reativar, gerar reset ou mudar papel de anonimizado |
-| 409 | `USER_NOT_ACTIVE` | atribuir usuário desativado |
+| 409 | `USER_NOT_ACTIVE` | atribuir usuário desativado; gerar link de redefinição para usuário desativado (não anonimizado) |
 | 409 | `BOARD_ARCHIVED` | mutação de conteúdo em quadro arquivado |
 | 409 | `LIST_ARCHIVED` | criar/mover card para lista arquivada; restaurar card de lista arquivada |
 | 409 | `LIST_IS_DONE_LIST` | criar card direto na lista de conclusão |
@@ -191,6 +192,7 @@ Body `{ token }`. 200 `{ userName: string, expiresAt }` · 410 `TOKEN_INVALID` (
 
 ### `POST /api/auth/password-resets/complete` · Pública · rate limit 10/15min/IP
 Body `{ token, password }`
+- Senha igual ao e-mail do usuário alvo → `400 VALIDATION_ERROR` com `details[].path = 'password'` (checagem no servidor, pois o e-mail não vem no corpo).
 - Consome o token, grava hash, `password_changed_at = now()`, apaga **todas** as sessões do usuário. Não cria sessão.
 204 · 410 `TOKEN_INVALID`.
 
@@ -200,7 +202,7 @@ Body `{ token, password }`
 Body `{ name }`. 200 `{ user: SessionUser }`.
 
 ### `POST /api/me/password` · Auth
-Body `{ currentPassword, newPassword }`.
+Body `{ currentPassword, newPassword }`. `currentPassword` segue a regra do login (1–256); `newPassword` segue a política de cadastro e não pode ser igual ao e-mail da sessão (`400 VALIDATION_ERROR` em `newPassword`, checagem no servidor).
 - Senha atual errada → `400 PASSWORD_INCORRECT` (conta para o throttle por e-mail).
 - Grava hash; apaga todas as sessões do usuário **exceto a atual**.
 204.
@@ -234,26 +236,26 @@ Anonimizado → `409 USER_ANONYMIZED`. Idempotente. 200 `{ user }`.
 Body `{ confirm: true }`. Exige desativado (`409 USER_NOT_DEACTIVATED`); não a si mesmo. Efeitos: `overview.md` §5.2. 200 `{ user }`.
 
 ### `POST /api/admin/users/:userId/password-reset-links`
-Usuário deve estar ativo (`409 USER_NOT_ACTIVE`) e não anonimizado. Revoga resets pendentes do alvo e cria novo (24h).
+Anonimizado → `409 USER_ANONYMIZED` (checado primeiro); desativado → `409 USER_NOT_ACTIVE`. Revoga resets pendentes do alvo e cria novo (24h).
 201 `{ url: string, expiresAt: IsoDateTime }` — URL `APP_ORIGIN/redefinir-senha#token=...`, exibida uma única vez.
 
 ### `GET /api/admin/invites`
 200 `{ invites: Array<{ id; email: string | null; role: Role; createdBy: Uuid; createdAt; expiresAt; state: 'pending' | 'used' | 'expired' | 'revoked'; usedByUserId: Uuid | null }> }`, mais recentes primeiro, últimos 30 dias + pendentes.
 
 ### `POST /api/admin/invites`
-Body `{ email?: string | null, role: Role }`. Se `email` já pertence a um usuário → `409 EMAIL_TAKEN`.
+Body `{ email?: string | null, role: Role }` (ausente = `null`; string vazia é e-mail inválido, o formulário envia `null`). Se `email` já pertence a um usuário → `409 EMAIL_TAKEN`.
 201 `{ invite: <mesmo item acima>, url: string }` — URL `APP_ORIGIN/convite#token=...`, exibida uma única vez.
 
 ### `DELETE /api/admin/invites/:inviteId`
 Revoga (se pendente). Idempotente. 204.
 
 ### `PATCH /api/admin/workspace`
-Body `{ name?, timezone? }`. 200 `{ workspace: Workspace }`.
+Body `{ name?, timezone? }` (ao menos um). 200 `{ workspace: Workspace }`.
 
 ## 9. Quadros
 
 ### `GET /api/boards?archived=false|true` · Auth
-Padrão `archived=false`. Ordem: `name ASC` (collation pt-BR no JS: o front pode reordenar com `localeCompare('pt-BR')`).
+Padrão `archived=false`; só os valores `true` e `false` são aceitos (outro → 400). Ordem: `name ASC` (collation pt-BR no JS: o front pode reordenar com `localeCompare('pt-BR')`).
 200 `{ boards: Board[] }`.
 
 ### `POST /api/boards` · Auth
@@ -368,7 +370,7 @@ Até 500 itens, mais recentes primeiro. 200 `{ activities: Activity[] }`.
 Body `{ name, color: PaletteColor }`. 201 `{ label: Label }`.
 
 ### `PATCH /api/labels/:labelId` · Auth
-Body `{ name?, color? }`. 200 `{ label }`.
+Body `{ name?, color? }` (ao menos um). 200 `{ label }`.
 
 ### `DELETE /api/labels/:labelId` · Auth
 Remove de todos os cards (cascata). A confirmação é da UI. 204.
@@ -385,7 +387,7 @@ Body `{ title }` (UI sugere "Checklist"). 201 `{ checklist: Checklist }`.
 Body `{ text }`. Cria no fim. 201 `{ item: ChecklistItem }`.
 
 ### `PATCH /api/checklist-items/:itemId` · Auth
-Body `{ text?, isChecked? }`. Marcar grava `checkedBy`/`checkedAt`; desmarcar limpa. Não gera atividade nem altera o status do card. 200 `{ item }`.
+Body `{ text?, isChecked? }` (ao menos um). Marcar grava `checkedBy`/`checkedAt`; desmarcar limpa. Não gera atividade nem altera o status do card. 200 `{ item }`.
 
 ### `POST /api/checklist-items/:itemId/move` · Auth
 Body `{ placement: Placement }` (mesmo checklist). 200 `{ item }`.
@@ -447,3 +449,16 @@ De outro usuário → `404 NOT_FOUND`. Idempotente. 204.
 ## 17. Testes de contrato obrigatórios (QA)
 
 Para cada rota: sucesso; `401` sem sessão (exceto públicas); `403 CSRF_REJECTED` em mutação sem header ou com `Origin` estranho; `400` com corpo inválido; `404` com id inexistente; `403` quando a matriz restringe; os `409` listados na rota. Além disso, os testes de regra de negócio listados em `plan.md`.
+
+## 18. Decisões de contrato fechadas na implementação dos schemas (v1.4)
+
+Registradas ao implementar `packages/shared` para as Fatias 2 a 9. Os schemas seguem estas escolhas.
+
+1. **`{ user }` de `deactivate`, `reactivate` e `anonymize`** tem o mesmo formato de `PATCH /api/admin/users/:userId`: `UserSummary & { email: string | null; createdAt }` (`adminUserResponseSchema`). O documento dizia só `{ user }`.
+2. **"Ao menos um campo"** vale para todo `PATCH` com campos opcionais: além de listas e cards, `PATCH /api/admin/workspace`, `PATCH /api/labels/:labelId` e `PATCH /api/checklist-items/:itemId`. Corpo vazio (ou só com campos desconhecidos, que são descartados) → `400 VALIDATION_ERROR`.
+3. **`Activity.data`** é união discriminada por `type` (overview.md §5.3), não `Record<string, unknown>`. Em `card_due_changed`, `hasTime` é o `dueHasTime` do novo prazo (`false` quando `to` é `null`).
+4. **Link de redefinição para usuário anonimizado**: §3 citava `USER_ANONYMIZED` e §8 citava `USER_NOT_ACTIVE`. Como anonimizado também está desativado, a checagem de anonimização vem primeiro (`USER_ANONYMIZED`); desativado não anonimizado → `USER_NOT_ACTIVE`.
+5. **Senha ≠ e-mail** vale em setup, aceite de convite, redefinição por link e troca de senha. Nos dois últimos o e-mail não está no corpo: o servidor usa `isPasswordSameAsEmail` (shared) e responde `400 VALIDATION_ERROR` com `details[].path` no campo da senha.
+6. **Token malformado** (diferente de 43 caracteres base64url) → `400 VALIDATION_ERROR`, não `410`. A UI de `/convite` e `/redefinir-senha` trata 400 e 410 igualmente como "link inválido".
+7. **Query strings**: `archived` aceita só `true`/`false`; `limit` de notificações é inteiro 1–100 (padrão 30). Datas de resposta são sempre ISO UTC com `Z`: o backend converte `Date` com `toISOString()` antes de responder (o serializer valida com o schema via `safeEncode`).
+8. **`POST /api/admin/invites`**: `email` ausente vira `null`; string vazia é inválida.

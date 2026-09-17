@@ -3,9 +3,13 @@ import { z } from 'zod';
 import {
   DEFAULT_TIMEZONE,
   emailSchema,
+  isoDateTimeSchema,
+  isPasswordSameAsEmail,
+  PASSWORD_SAME_AS_EMAIL_MESSAGE,
   passwordSchema,
   roleSchema,
   timezoneSchema,
+  tokenSchema,
   userNameSchema,
   uuidSchema,
   workspaceNameSchema,
@@ -55,8 +59,8 @@ export const setupRequestSchema = z
     email: emailSchema,
     password: passwordSchema,
   })
-  .refine((body) => body.password.trim().toLowerCase() !== body.email, {
-    error: 'A senha não pode ser igual ao e-mail',
+  .refine((body) => !isPasswordSameAsEmail(body.password, body.email), {
+    error: PASSWORD_SAME_AS_EMAIL_MESSAGE,
     path: ['password'],
   });
 
@@ -87,6 +91,63 @@ export const meResponseSchema = authSessionResponseSchema;
 
 // `POST /api/auth/logout` → 204 sem corpo: não há schema de resposta.
 
+// ---------------------------------------------------------------------------
+// Convites e redefinição de senha: rotas públicas (api.md §5, Fatia 2)
+// ---------------------------------------------------------------------------
+
+/** Corpo `{ token }` dos lookups de convite e de redefinição. */
+export const tokenLookupRequestSchema = z.object({
+  token: tokenSchema,
+});
+
+/** `POST /api/auth/invites/lookup` (corpo). */
+export const inviteLookupRequestSchema = tokenLookupRequestSchema;
+
+/** `POST /api/auth/invites/lookup` → 200. `email` nulo = convite sem e-mail fixo. */
+export const inviteLookupResponseSchema = z.object({
+  email: z.string().nullable(),
+  role: roleSchema,
+  expiresAt: isoDateTimeSchema,
+});
+
+/**
+ * `POST /api/auth/invites/accept` (corpo). Mesmas regras de e-mail e senha do setup.
+ * E-mail diferente do fixado no convite → 409 `INVITE_EMAIL_MISMATCH` (checado no servidor).
+ */
+export const acceptInviteRequestSchema = z
+  .object({
+    token: tokenSchema,
+    name: userNameSchema,
+    email: emailSchema,
+    password: passwordSchema,
+  })
+  .refine((body) => !isPasswordSameAsEmail(body.password, body.email), {
+    error: PASSWORD_SAME_AS_EMAIL_MESSAGE,
+    path: ['password'],
+  });
+
+/** `POST /api/auth/invites/accept` → 201 (+ Set-Cookie). */
+export const acceptInviteResponseSchema = authSessionResponseSchema;
+
+/** `POST /api/auth/password-resets/lookup` (corpo). */
+export const passwordResetLookupRequestSchema = tokenLookupRequestSchema;
+
+/** `POST /api/auth/password-resets/lookup` → 200. */
+export const passwordResetLookupResponseSchema = z.object({
+  userName: z.string(),
+  expiresAt: isoDateTimeSchema,
+});
+
+/**
+ * `POST /api/auth/password-resets/complete` (corpo) → 204.
+ * O e-mail do alvo não vem no corpo: o servidor recusa senha igual ao e-mail com
+ * `isPasswordSameAsEmail` → 400 `VALIDATION_ERROR` em `password`.
+ */
+export const completePasswordResetRequestSchema = z.object({
+  token: tokenSchema,
+  password: passwordSchema,
+});
+
 export type SessionUser = z.infer<typeof sessionUserSchema>;
 export type Workspace = z.infer<typeof workspaceSchema>;
 export type AuthSessionResponse = z.infer<typeof authSessionResponseSchema>;
@@ -99,3 +160,11 @@ export type SetupResponse = z.infer<typeof setupResponseSchema>;
 export type LoginRequest = z.infer<typeof loginRequestSchema>;
 export type LoginResponse = z.infer<typeof loginResponseSchema>;
 export type MeResponse = z.infer<typeof meResponseSchema>;
+export type TokenLookupRequest = z.infer<typeof tokenLookupRequestSchema>;
+export type InviteLookupRequest = z.infer<typeof inviteLookupRequestSchema>;
+export type InviteLookupResponse = z.infer<typeof inviteLookupResponseSchema>;
+export type AcceptInviteRequest = z.infer<typeof acceptInviteRequestSchema>;
+export type AcceptInviteResponse = z.infer<typeof acceptInviteResponseSchema>;
+export type PasswordResetLookupRequest = z.infer<typeof passwordResetLookupRequestSchema>;
+export type PasswordResetLookupResponse = z.infer<typeof passwordResetLookupResponseSchema>;
+export type CompletePasswordResetRequest = z.infer<typeof completePasswordResetRequestSchema>;

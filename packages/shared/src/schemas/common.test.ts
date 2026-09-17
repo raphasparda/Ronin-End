@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  booleanQuerySchema,
   cardPrioritySchema,
   dueInputSchema,
   emailSchema,
+  hasAtLeastOneField,
   isoDateTimeSchema,
   paletteColorSchema,
   passwordSchema,
@@ -110,5 +112,22 @@ describe('enums', () => {
     }
     expect(cardPrioritySchema.safeParse('none').success).toBe(false);
     expect(cardPrioritySchema.safeParse(null).success).toBe(false);
+  });
+});
+
+describe('utilitários de contrato', () => {
+  it('booleanQuerySchema respeita o padrão e aceita só true/false', () => {
+    const withTrue = booleanQuerySchema(true);
+    expect(withTrue.parse(undefined)).toBe(true);
+    expect(withTrue.parse('false')).toBe(false);
+    expect(booleanQuerySchema(false).parse(undefined)).toBe(false);
+    expect(withTrue.safeParse('TRUE').success).toBe(false);
+  });
+
+  it('hasAtLeastOneField ignora undefined', () => {
+    expect(hasAtLeastOneField({})).toBe(false);
+    expect(hasAtLeastOneField({ a: undefined })).toBe(false);
+    expect(hasAtLeastOneField({ a: null })).toBe(true);
+    expect(hasAtLeastOneField({ a: false })).toBe(true);
   });
 });
