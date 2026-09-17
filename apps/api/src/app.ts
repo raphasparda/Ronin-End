@@ -23,9 +23,16 @@ import {
 } from './db/client';
 import { argon2ParamsFor, createPasswordHasher, type PasswordHasher } from './lib/password';
 import { buildLoggerOptions } from './logger';
+import { adminRoutes } from './modules/admin/routes';
 import { authRoutes } from './modules/auth/routes';
+import { boardRoutes } from './modules/boards/routes';
 import { healthRoutes } from './modules/health/routes';
+import { inviteRoutes } from './modules/invites/routes';
+import { listRoutes } from './modules/lists/routes';
+import { meRoutes } from './modules/me/routes';
+import { passwordResetRoutes } from './modules/password-resets/routes';
 import { setupRoutes } from './modules/setup/routes';
+import { userRoutes } from './modules/users/routes';
 import { registerCsrf } from './plugins/csrf';
 import { registerErrorHandlers } from './plugins/errors';
 import { registerOpenApi } from './plugins/openapi';
@@ -116,6 +123,13 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   await app.register(healthRoutes, { checkDatabase });
   await app.register(setupRoutes);
   await app.register(authRoutes);
+  await app.register(inviteRoutes);
+  await app.register(passwordResetRoutes);
+  await app.register(meRoutes);
+  await app.register(userRoutes);
+  await app.register(adminRoutes, { appOrigin: env.APP_ORIGIN });
+  await app.register(boardRoutes);
+  await app.register(listRoutes);
 
   return app;
 }

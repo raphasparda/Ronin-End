@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq, ne } from 'drizzle-orm';
 
 import type { DbExecutor } from '../../db/client';
 import { sessions, users, type SessionRow, type UserRow } from '../../db/schema';
@@ -49,4 +49,19 @@ export async function updateSessionActivity(
 
 export async function deleteSessionById(db: DbExecutor, sessionId: string): Promise<void> {
   await db.delete(sessions).where(eq(sessions.id, sessionId));
+}
+
+/** Apaga as sessões do usuário, opcionalmente mantendo uma (troca de senha mantém a atual). */
+export async function deleteSessionsOfUser(
+  db: DbExecutor,
+  userId: string,
+  exceptSessionId: string | null = null,
+): Promise<void> {
+  await db
+    .delete(sessions)
+    .where(
+      exceptSessionId === null
+        ? eq(sessions.userId, userId)
+        : and(eq(sessions.userId, userId), ne(sessions.id, exceptSessionId)),
+    );
 }

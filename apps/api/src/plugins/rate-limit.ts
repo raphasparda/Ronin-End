@@ -35,3 +35,9 @@ export async function registerRateLimit(app: FastifyInstance): Promise<void> {
       }),
   });
 }
+
+/** Lookup/uso de convite e redefinição: 10 req / 15 min por IP (overview.md §6.4, ADR 0008). */
+export const TOKEN_ROUTE_RATE_LIMIT = { max: 10, timeWindowMs: 15 * 60_000 } as const;
+
+export const tokenRouteRateLimit = (): RateLimitOptions =>
+  perIpRateLimit(TOKEN_ROUTE_RATE_LIMIT.max, TOKEN_ROUTE_RATE_LIMIT.timeWindowMs);

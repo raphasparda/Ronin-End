@@ -24,3 +24,15 @@ export async function upsertWorkspace(
   if (!row) throw new Error('upsert em workspace não retornou linha');
   return row;
 }
+
+export async function updateWorkspaceRow(
+  db: DbExecutor,
+  values: { name?: string; timezone?: string; updatedAt: Date },
+): Promise<WorkspaceRow | undefined> {
+  const [row] = await db
+    .update(workspace)
+    .set(values)
+    .where(eq(workspace.id, WORKSPACE_ID))
+    .returning();
+  return row;
+}

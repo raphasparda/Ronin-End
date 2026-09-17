@@ -5,6 +5,7 @@ import { isTokenFormat, randomToken, sha256Hex } from '../../lib/tokens';
 
 import {
   deleteSessionById,
+  deleteSessionsOfUser,
   findSessionWithUser,
   insertSession,
   updateSessionActivity,
@@ -101,4 +102,13 @@ export async function resolveSession(
 
 export async function deleteSession(db: DbExecutor, sessionId: string): Promise<void> {
   await deleteSessionById(db, sessionId);
+}
+
+/** Encerra todas as sessões do usuário, exceto `exceptSessionId` (se informado). */
+export async function deleteUserSessions(
+  db: DbExecutor,
+  userId: string,
+  exceptSessionId: string | null = null,
+): Promise<void> {
+  await deleteSessionsOfUser(db, userId, exceptSessionId);
 }

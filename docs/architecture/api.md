@@ -1,6 +1,6 @@
 # Kanban: contrato da API REST (MVP)
 
-> Status: v1.3 (2026-09-16; v1.2 alinhou ao `scope.md` v2: sem gamificação, cor por lista, prioridade do card, reabrir para o topo; v1.3 adicionou `415 UNSUPPORTED_MEDIA_TYPE`; v1.4 (2026-09-17) fechou ambiguidades ao implementar os schemas das Fatias 2 a 9, ver §18). Complementa `overview.md`. Os schemas Zod em `packages/shared/src/schemas/` são a fonte da verdade em código e devem refletir exatamente este documento. Mudança de contrato = atualizar este arquivo no mesmo PR.
+> Status: v1.5 (2026-09-17; v1.2 alinhou ao `scope.md` v2: sem gamificação, cor por lista, prioridade do card, reabrir para o topo; v1.3 adicionou `415 UNSUPPORTED_MEDIA_TYPE`; v1.4 (2026-09-17) fechou ambiguidades ao implementar os schemas das Fatias 2 a 9, ver §18; v1.5 registrou decisões do backend das Fatias 2 e 3, §18.1). Complementa `overview.md`. Os schemas Zod em `packages/shared/src/schemas/` são a fonte da verdade em código e devem refletir exatamente este documento. Mudança de contrato = atualizar este arquivo no mesmo PR.
 
 ## 1. Convenções
 
@@ -462,3 +462,17 @@ Registradas ao implementar `packages/shared` para as Fatias 2 a 9. Os schemas se
 6. **Token malformado** (diferente de 43 caracteres base64url) → `400 VALIDATION_ERROR`, não `410`. A UI de `/convite` e `/redefinir-senha` trata 400 e 410 igualmente como "link inválido".
 7. **Query strings**: `archived` aceita só `true`/`false`; `limit` de notificações é inteiro 1–100 (padrão 30). Datas de resposta são sempre ISO UTC com `Z`: o backend converte `Date` com `toISOString()` antes de responder (o serializer valida com o schema via `safeEncode`).
 8. **`POST /api/admin/invites`**: `email` ausente vira `null`; string vazia é inválida.
+
+### 18.1 Decisões fechadas na implementação do backend das Fatias 2 e 3 (v1.5)
+
+Nenhuma muda schema; todas detalham comportamento que o documento deixava em aberto.
+
+9. **Ordem de checagem em `/api/*admin*`**: o papel é exigido por um `preHandler` do plugin, então Member recebe `403 FORBIDDEN` **antes** do 404 (não revela se o id existe). Nas demais rotas vale a ordem do §3 (404 → 403); em `DELETE /api/boards/:boardId` a ordem é 404 → 403 → `400 CONFIRMATION_MISMATCH`.
+10. **`POST /api/me/password`**: além de `400 PASSWORD_INCORRECT` (que conta no bloqueio por e-mail do login), com o e-mail bloqueado responde `429 TOO_MANY_ATTEMPTS` + `Retry-After`, antes de verificar a senha atual. A checagem "nova senha = e-mail" vem antes das duas.
+11. **`POST /api/auth/invites/accept` com sessão no navegador**: a sessão anterior é apagada e a nova é criada (mesmo comportamento do login). Consumo, criação do usuário e sessão são uma transação: `409 EMAIL_TAKEN` por corrida no `UNIQUE` também devolve o token ao estado pendente.
+12. **Rate limit das rotas de token** (10 req / 15 min por IP) é contado **por rota** (lookup e aceite/uso têm contadores separados).
+13. **`DELETE /api/admin/invites/:inviteId`**: id que não é convite (ex.: token de redefinição) → 404. Convite já usado, expirado ou revogado → 204 sem alterar nada.
+14. **`PATCH /api/admin/users/:userId`**: mesmo papel → 200 no-op (inclusive para si mesmo); `CANNOT_TARGET_SELF` só quando o papel mudaria. `LAST_ADMIN` é garantido com lock dos Admins ativos; pela API ele só aparece em operações concorrentes (o ator é sempre um Admin ativo diferente do alvo).
+15. **Listas**: `PATCH /api/lists/:listId` com `name`/`color` é aceito em lista arquivada (só `isDoneList: true` → `409 LIST_ARCHIVED`); `POST /api/lists/:listId/move` de lista arquivada → `409 LIST_ARCHIVED`. Toda mutação de lista (inclusive `archive`/`restore`) em quadro arquivado → `409 BOARD_ARCHIVED`.
+16. **`PATCH /api/lists/:listId { isDoneList: true }`** já conclui os cards abertos (tarefa 8.2 antecipada no `modules/completion`): só quando a lista **passa** a ser de conclusão; remarcar a mesma lista responde `completedCardIds: []`. `completedCardIds` vem ordenado por id.
+17. **Payload do quadro** (`GET /api/boards/:boardId`) já traz cards (com agregados, `labelIds`, `assigneeIds`) e `labels` reais, lidos num snapshot `REPEATABLE READ` somente leitura. Ordem de `assigneeIds`: por data de atribuição; de `labelIds`: por nome da etiqueta.

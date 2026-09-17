@@ -1,0 +1,125 @@
+import { and, desc, eq, gt, gte, isNull, or } from 'drizzle-orm';
+
+import type { DbExecutor } from '../../db/client';
+import { authTokens, type AuthTokenRow, type NewAuthTokenRow } from '../../db/schema';
+
+export type AuthTokenKind = AuthTokenRow['kind'];
+
+/** Pendente em `now`: não usado, não revogado e não expirado (ADR 0008). */
+function pendingCondition(now: Date) {
+  return and(
+    isNull(authTokens.usedAt),
+    isNull(authTokens.revokedAt),
+    gt(authTokens.expiresAt, now),
+  );
+}
+
+export async function insertAuthToken(
+  db: DbExecutor,
+  values: NewAuthTokenRow,
+): Promise<AuthTokenRow> {
+  const [row] = await db.insert(authTokens).values(values).returning();
+  if (!row) throw new Error('insert em auth_tokens não retornou linha');
+  return row;
+}
+
+/** Token pendente pelo hash (sem consumir). */
+export async function findPendingToken(
+  db: DbExecutor,
+  kind: AuthTokenKind,
+  tokenHash: string,
+  now: Date,
+): Promise<AuthTokenRow | undefined> {
+  const [row] = await db
+    .select()
+    .from(authTokens)
+    .where(
+      and(eq(authTokens.tokenHash, tokenHash), eq(authTokens.kind, kind), pendingCondition(now)),
+    )
+    .limit(1);
+  return row;
+}
+
+/**
+ * Consumo atômico (overview.md §6.5): só um `UPDATE` concorrente encontra a linha pendente; os
+ * outros esperam o lock da linha, reavaliam o `WHERE` e não retornam nada.
+ */
+export async function consumeToken(
+  db: DbExecutor,
+  kind: AuthTokenKind,
+  tokenHash: string,
+  now: Date,
+  usedByUserId: string | null,
+): Promise<AuthTokenRow | undefined> {
+  const [row] = await db
+    .update(authTokens)
+    .set({ usedAt: now, ...(usedByUserId ? { usedByUserId } : {}) })
+    .where(
+      and(eq(authTokens.tokenHash, tokenHash), eq(authTokens.kind, kind), pendingCondition(now)),
+    )
+    .returning();
+  return row;
+}
+
+export async function setTokenUsedBy(db: DbExecutor, id: string, userId: string): Promise<void> {
+  await db.update(authTokens).set({ usedByUserId: userId }).where(eq(authTokens.id, id));
+}
+
+export async function findInviteById(
+  db: DbExecutor,
+  id: string,
+): Promise<AuthTokenRow | undefined> {
+  const [row] = await db
+    .select()
+    .from(authTokens)
+    .where(and(eq(authTokens.id, id), eq(authTokens.kind, 'invite')))
+    .limit(1);
+  return row;
+}
+
+/** Convites criados desde `since` ou ainda pendentes, mais recentes primeiro. */
+export async function listInvites(db: DbExecutor, since: Date, now: Date): Promise<AuthTokenRow[]> {
+  return db
+    .select()
+    .from(authTokens)
+    .where(
+      and(
+        eq(authTokens.kind, 'invite'),
+        or(gte(authTokens.createdAt, since), pendingCondition(now)),
+      ),
+    )
+    .orderBy(desc(authTokens.createdAt), desc(authTokens.id));
+}
+
+/** Revoga o convite se ainda estiver pendente. Retorna a linha atualizada (ou nada). */
+export async function revokePendingInvite(
+  db: DbExecutor,
+  id: string,
+  now: Date,
+): Promise<AuthTokenRow | undefined> {
+  const [row] = await db
+    .update(authTokens)
+    .set({ revokedAt: now })
+    .where(and(eq(authTokens.id, id), eq(authTokens.kind, 'invite'), pendingCondition(now)))
+    .returning();
+  return row;
+}
+
+/** Revoga todos os links de redefinição não usados e não revogados do usuário. */
+export async function revokeUnusedPasswordResets(
+  db: DbExecutor,
+  targetUserId: string,
+  now: Date,
+): Promise<void> {
+  await db
+    .update(authTokens)
+    .set({ revokedAt: now })
+    .where(
+      and(
+        eq(authTokens.kind, 'password_reset'),
+        eq(authTokens.targetUserId, targetUserId),
+        isNull(authTokens.usedAt),
+        isNull(authTokens.revokedAt),
+      ),
+    );
+}
