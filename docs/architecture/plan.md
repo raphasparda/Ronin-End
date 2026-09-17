@@ -1,7 +1,8 @@
 # Kanban: plano de implementação do MVP
 
-> Status: v1.2 (2026-09-16). Base: `overview.md`, `api.md`, `adr/`, `docs/product/scope.md` v2.
+> Status: v1.3 (2026-09-17). Base: `overview.md`, `api.md`, `adr/`, `docs/product/scope.md` v2.
 > v1.2: gamificação removida; cor por lista, prioridade do card e reabrir para o topo incluídos; Fatia 8 virou "Conclusão e anonimização"; Fatia 10 cobre operação em VPS (banco fechado, backup fora da VPS, reboot).
+> v1.3: **Fatia 11** (cards restritos e capa do card no Cloudflare R2), depois do MVP e já com a instância publicada no Render + Neon (ADR 0015 e ADR 0016).
 > Cada fatia é vertical (banco → API → UI → testes) e termina com algo utilizável. Tarefas pequenas (≤ 1 dia), ordenadas, com área, dependências e critério de pronto (DoD).
 
 ## Regras gerais (valem para todas as tarefas)
@@ -169,6 +170,35 @@ Depende das Fatias 3 e 4; pode rodar em paralelo com 5, 6 e 7. O `move` é tocad
 
 ---
 
+## Fatia 11: Cards restritos e capa do card (pós-MVP)
+
+Duas funcionalidades pedidas pelo cliente depois do MVP, sobre a instância já publicada (Render + Neon):
+
+1. **Capa do card**: imagem enviada do computador, guardada no Cloudflare R2 (bucket privado), lida por URL assinada de curta duração e mostrada na face e no detalhe ([ADR 0016](adr/0016-capas-no-cloudflare-r2-com-urls-assinadas.md)).
+2. **Cards restritos**: `visibility: 'team' | 'restricted'` + lista de pessoas com acesso; quem não tem acesso vê o card no quadro com título e cadeado e não abre, edita, comenta nem move; Admin sempre vê tudo ([ADR 0015](adr/0015-visibilidade-do-card-e-payload-bloqueado.md)).
+
+As duas trilhas são independentes depois da tarefa de banco, **menos** onde se cruzam: card bloqueado nunca traz capa nem URL assinada (11.6 depende de 11.3). Contrato em `api.md` §2, §3, §9, §11 e §18.7; modelo e regras em `overview.md` §4.4, §4.5, §5.1, §6.6 e §6.9.
+
+Restrições que valem para toda a fatia: continuar funcionando **sem R2 configurado**; payload do quadro em 6 consultas, sem N+1; Neon Free (0,5 GB) e Render Free (512 MB, cold start).
+
+| ID | Área | Depende | Tarefa | DoD |
+|----|--------|---------|--------|-----|
+| 11.1 | Backend | — | Shared: `cardVisibilitySchema`, `lockedCardSchema` e `boardCardSchema` (união discriminada por `locked`; `cardSummarySchema` ganha `locked: false`, `visibility` e `cover`), `cardCoverSchema`, `viewerIds` no detalhe, corpos e respostas de visibilidade, viewers e capa, `featuresSchema` nas respostas de sessão, novos `ErrorCode` (`CARD_RESTRICTED`, `CARD_NOT_RESTRICTED`, `COVER_UPLOAD_INVALID`, `COVER_STORAGE_UNAVAILABLE`), novos tipos de atividade, constantes `CARD_COVER_MAX_BYTES` e `CARD_COVER_CONTENT_TYPES` e a função pura `canAccessCard`. | Schemas batem com `api.md` §2, §3, §11 e §18.7. Testes: `boardCardSchema` recusa campo extra em `LockedCard` e discrimina pelos dois valores de `locked`; `canAccessCard` cobre admin, viewer, não-viewer e `team`. |
+| 11.2 | Banco | 11.1 | Migration `0008_card_visibility_and_covers`: enum `card_visibility`; `cards.visibility not null default 'team'`; tabelas `card_viewers` e `card_covers` com `CHECK`s e índices de `overview.md` §5.1; novos valores de `activity_type`. Schema Drizzle em `src/db/schema/cards.ts`. | Migration aplica em base com dados e **todo card existente fica `team`** (teste com linhas antigas). `CHECK` da chave da capa recusa chave de outro card; tipo e tamanho fora da regra recusados; `card_viewers` duplicado recusado pela PK. `catalog.test.ts` continua verde (FK nova com índice). |
+| 11.3 | Backend | 11.2 | `modules/cards/access.ts` (função pura + `assertCardAccess` + `cardAccessCondition`) e integração: ator passa a entrar em `lockCard()` (cards, checklists, comentários, etiquetas, responsáveis), leituras de card com `assertCardAccess`, payload do quadro e arquivados devolvendo `LockedCard`, predicado nas consultas de agregados/etiquetas/responsáveis, filtro em `GET /api/me/cards` e nas notificações (listagem e `unreadCount`). | Matriz de testes ator (admin/member) × visibilidade × viewer × rota (ler, editar, mover, concluir, arquivar, comentar, checklist, etiqueta, responsável): sem acesso → `403 CARD_RESTRICTED`, com acesso → igual a antes. Teste de vazamento: resposta do quadro para não-viewer tem exatamente `{id,listId,position,title,locked}`. Contagem de consultas do payload continua 6. Notificação de card sem acesso some da lista e do contador. |
+| 11.4 | Backend | 11.3 | Rotas de visibilidade e acesso: `PUT /api/cards/:cardId/visibility`, `PUT`/`DELETE /api/cards/:cardId/viewers/:userId`; inclusão automática do ator e dos responsáveis ao restringir; atribuição em card restrito insere o viewer; `viewerIds` no detalhe; atividades `card_visibility_changed`, `card_viewer_added`, `card_viewer_removed`. | Testes: restringir inclui ator + responsáveis; voltar para `team` esvazia a lista; viewer em card `team` → `409 CARD_NOT_RESTRICTED`; usuário desativado → `409 USER_NOT_ACTIVE`; remover a si mesmo passa a dar 403 na chamada seguinte; `PATCH /lists/:id { isDoneList: true }` conclui também o restrito invisível ao ator (exceção documentada); idempotência sem atividade duplicada. |
+| 11.5 | Backend | 11.1 | `src/lib/r2.ts` (SigV4 próprio: presign `PUT`/`GET`, `HEAD`, `DELETE`, `ListObjectsV2`, timeout de 5 s), bloco opcional tudo-ou-nada no `config/env.ts`, `app.coverStorage` (ou `null`), `features.cardCovers` nas respostas de setup/login/me, `redact` do segredo. | Testes: assinatura conferida contra vetor conhecido; env com só parte das variáveis não sobe; sem variáveis, `features.cardCovers: false` e rotas de capa em `503`; nenhuma dependência nova no `package.json`; bundle do `tsup` sem crescimento relevante. |
+| 11.6 | Backend | 11.5, 11.3 | Rotas da capa: `POST /api/cards/:cardId/cover/upload-url`, `PUT /api/cards/:cardId/cover` (HEAD + 16 bytes + upsert + apagar a anterior), `DELETE /api/cards/:cardId/cover`; `cover` assinada no payload do quadro (`LEFT JOIN card_covers`), no detalhe e em arquivados; janelas de 5 min + cache em memória; exclusão do objeto ao excluir card/quadro; varredura de órfãos em `plugins/maintenance.ts`. | Testes com R2 falso: tipo/tamanho fora da regra → 400; chave de outro card → 400; objeto ausente, grande demais ou com magic bytes errados → `409 COVER_UPLOAD_INVALID` e objeto apagado; trocar a capa apaga a anterior; card bloqueado nunca traz `cover`; duas chamadas na mesma janela devolvem a **mesma** URL; R2 fora do ar → `503`, nunca 500; limpeza apaga só órfão com mais de 24 h. Payload do quadro continua em 6 consultas. |
+| 11.7 | Frontend | 11.1, 11.4 | Restrição na UI: cadeado com texto na face do card bloqueado (sem menu, sem link, sem arrastar), estado "Você não tem acesso a este card" na rota do detalhe, seção "Quem vê este card" no detalhe (alternar `team`/`restrito`, adicionar/remover pessoas, aviso ao se remover), cadeado também no card restrito com acesso, textos da atividade para os três tipos novos, filtro do quadro coerente com card bloqueado. | Testes (MSW): face bloqueada não tem link nem menu e anuncia "Card restrito"; 403 na abertura mostra o estado certo e não quebra o quadro; restringir inclui responsáveis na lista exibida; remover a si mesmo pede confirmação; axe sem violações nos dois temas; funciona em 360 px. |
+| 11.8 | Frontend | 11.1, 11.6 | Capa na UI: botão "Adicionar capa" (só com `features.cardCovers`), seleção de arquivo, redimensionamento no cliente (máx. 1600 px no maior lado), fluxo URL → `PUT` no R2 com progresso → confirmação, troca e remoção, capa na face (proporção fixa, `loading="lazy"`, `alt=""`) e no topo do detalhe, mensagens de erro por caso (tipo, tamanho, falha de rede, `503`). | Testes (MSW): arquivo grande demais é barrado antes do upload; falha no `PUT` mostra erro e não cria capa; remover volta o card ao estado sem capa; sem `features.cardCovers` o botão não existe; a face não pula de altura ao carregar a imagem (espaço reservado). |
+| 11.9 | Infra | 11.5 | Bucket R2 privado + token com escopo só nesse bucket, regra de CORS para `PUT` a partir do `APP_ORIGIN`, variáveis no Render, `img-src` do R2 na CSP do ronin-web, `docs/ops/cloudflare-r2.md` (criar bucket e token, CORS, rotação de credencial, o que fazer se o R2 cair, aviso de que as imagens não entram no backup do banco) e nota no `deploy-render.md`. | Upload real ponta a ponta no ambiente publicado; sem erro de CORS nem de CSP no console; credencial rotacionada uma vez seguindo o próprio documento; instância sem as variáveis continua funcionando (teste em ambiente de review). |
+| 11.10 | QA | 11.7, 11.8 | E2E com dois usuários: A restringe um card e adiciona B → C (Member) vê cadeado e não abre → Admin abre normalmente → A atribui C, que passa a ver → A remove C, que volta ao cadeado; capa: enviar, ver na face e no detalhe, trocar, remover; card restrito com capa não expõe imagem para quem não tem acesso (a resposta não traz URL). | E2E verde no CI; matriz de rastreabilidade atualizada em `docs/qa/traceability.md` com as duas funcionalidades. |
+| 11.11 | Segurança | 11.10 | Revisão: vazamento no payload bloqueado (incluindo agregados e atividade), IDOR de `objectKey`, TTL e escopo das URLs assinadas, tipos aceitos e magic bytes, CORS do bucket, CSP do front, segredo do R2 fora dos logs, limites de rota para pedidos de URL de upload. | Relatório sem achados altos/críticos abertos; limite de requisições da rota de upload definido e testado. |
+
+Paralelismo: 11.1 abre a fatia; depois 11.2 e 11.5 em paralelo; 11.3 → 11.4 (trilha de restrição) e 11.5 → 11.6 (trilha de capa) correm juntas, com 11.6 fazendo rebase depois de 11.3; 11.7 e 11.8 em paralelo com o backend (MSW); 11.9 pode começar junto com 11.5; 11.10 e 11.11 fecham.
+
+---
+
 ## Ordem recomendada e paralelismo
 
 ```mermaid
@@ -188,6 +218,7 @@ flowchart LR
   F1 --> F10a[10.1 Dockerfile API]
   F7 --> F10[Fatia 10<br/>VPS/Operação/Fechamento]
   F9 --> F10
+  F10 --> F11[Fatia 11<br/>Cards restritos/Capa]
 ```
 
 1. **Fatia 0** (0.1 → {0.2, 0.3} → {0.4, 0.6} → 0.5 → 0.7 → 0.8).
@@ -197,5 +228,6 @@ flowchart LR
 5. **Fatias 5, 6 e 8 em paralelo** (8.3 aguarda 2.4; 8.2 faz merge depois de 5.3 por causa do `move`).
 6. **Fatias 7 e 9 em paralelo** (7 após 5 e 6; 9 após 5, com o E2E 9.3 após 8.2).
 7. **Fatia 10**: 10.1 pode começar logo após a Fatia 1; 10.2–10.6 a partir da Fatia 4 (o destino do backup externo precisa estar contratado até 10.3); 10.7–10.9 no fim.
+8. **Fatia 11** (pós-MVP, sobre a instância publicada): 11.1 → {11.2, 11.5} → {11.3 → 11.4} e {11.6} em paralelo → {11.7, 11.8} com o front usando MSW desde 11.1 → 11.10 → 11.11. A tarefa de infra (11.9) corre em paralelo a partir de 11.5, e o bucket precisa existir antes do E2E.
 
 Dentro de cada fatia: Shared e Banco primeiro (em paralelo), depois Backend e Frontend em paralelo (Frontend com MSW), por fim QA.

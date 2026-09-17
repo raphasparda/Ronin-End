@@ -1,6 +1,6 @@
 # Kanban: contrato da API REST (MVP)
 
-> Status: v1.9 (2026-09-17; v1.2 alinhou ao `scope.md` v2: sem gamificação, cor por lista, prioridade do card, reabrir para o topo; v1.3 adicionou `415 UNSUPPORTED_MEDIA_TYPE`; v1.4 (2026-09-17) fechou ambiguidades ao implementar os schemas das Fatias 2 a 9, ver §18; v1.5 registrou decisões do backend das Fatias 2 e 3, §18.1; v1.6 registrou decisões do backend da Fatia 4, §18.2; v1.7 registrou decisões do backend das Fatias 5 e 6, §18.3; v1.8 registrou decisões do backend das Fatias 7, 8 e 9, §18.4; v1.9 registrou as correções da revisão de segurança, §18.5; v1.10 (2026-09-17) adicionou o código de configuração do setup, `requiresSetupToken` e `403 SETUP_TOKEN_INVALID`, §18.6). Complementa `overview.md`. Os schemas Zod em `packages/shared/src/schemas/` são a fonte da verdade em código e devem refletir exatamente este documento. Mudança de contrato = atualizar este arquivo no mesmo PR.
+> Status: v1.11 (2026-09-17; v1.2 alinhou ao `scope.md` v2: sem gamificação, cor por lista, prioridade do card, reabrir para o topo; v1.3 adicionou `415 UNSUPPORTED_MEDIA_TYPE`; v1.4 (2026-09-17) fechou ambiguidades ao implementar os schemas das Fatias 2 a 9, ver §18; v1.5 registrou decisões do backend das Fatias 2 e 3, §18.1; v1.6 registrou decisões do backend da Fatia 4, §18.2; v1.7 registrou decisões do backend das Fatias 5 e 6, §18.3; v1.8 registrou decisões do backend das Fatias 7, 8 e 9, §18.4; v1.9 registrou as correções da revisão de segurança, §18.5; v1.10 (2026-09-17) adicionou o código de configuração do setup, `requiresSetupToken` e `403 SETUP_TOKEN_INVALID`, §18.6; v1.11 (2026-09-17) abriu a Fatia 11: visibilidade do card com payload bloqueado e capa de imagem no Cloudflare R2, §18.7). Complementa `overview.md`. Os schemas Zod em `packages/shared/src/schemas/` são a fonte da verdade em código e devem refletir exatamente este documento. Mudança de contrato = atualizar este arquivo no mesmo PR.
 
 ## 1. Convenções
 
@@ -29,6 +29,9 @@ type CardStatus = 'open' | 'completed';
 // Chaves da paleta (valores visuais nos tokens CSS). Usada por listas e etiquetas.
 type PaletteColor = 'gray' | 'red' | 'orange' | 'yellow' | 'green' | 'cyan' | 'blue' | 'purple' | 'magenta';
 type CardPriority = 'low' | 'medium' | 'high' | 'urgent';   // cores fixas no front (RN16)
+// Fatia 11: 'team' = todo usuário ativo vê (padrão, RN05); 'restricted' = só Admins e a lista de
+// pessoas com acesso (`viewerIds`). ADR 0015.
+type CardVisibility = 'team' | 'restricted';
 
 // Posição relativa entre irmãos ativos (não arquivados) do destino.
 type Placement =
@@ -42,6 +45,10 @@ type DueInput = { date: string /* YYYY-MM-DD */; time: string | null /* HH:mm 24
 type SessionUser = { id: Uuid; name: string; email: string; role: Role };
 type Workspace = { name: string; timezone: string };
 
+// Recursos ligados nesta instância (dependem de configuração, não de papel). Fatia 11.
+// `cardCovers` é false quando a instância não tem R2 configurado (ADR 0016).
+type Features = { cardCovers: boolean };
+
 // Visão pública de usuário (listas, avatares, atribuição). Sem e-mail.
 type UserSummary = { id: Uuid; name: string; role: Role; status: UserStatus; anonymized: boolean };
 
@@ -51,19 +58,34 @@ type List = { id: Uuid; boardId: Uuid; name: string; position: string; isDoneLis
 
 type Label = { id: Uuid; boardId: Uuid; name: string; color: PaletteColor };
 
+// Capa do card (Fatia 11, ADR 0016). `url` é assinada e de curta duração (validade entre 10 e
+// 15 min, ver §18.7 item 55). `width`/`height` são os do arquivo enviado, informados pelo cliente,
+// e servem só para reservar o espaço na tela.
+type CardCover = { url: string; width: number | null; height: number | null; expiresAt: IsoDateTime };
+
 // Face do card (payload do quadro)
 type CardSummary = {
+  locked: false;
   id: Uuid; boardId: Uuid; listId: Uuid;
   title: string; position: string;
   status: CardStatus; completedAt: IsoDateTime | null;
   dueAt: IsoDateTime | null; dueHasTime: boolean;
   priority: CardPriority | null;
+  visibility: CardVisibility;
   labelIds: Uuid[]; assigneeIds: Uuid[];
   checklist: { done: number; total: number };  // soma de todos os checklists
   commentCount: number;
   hasDescription: boolean;
+  cover: CardCover | null;                     // null sem capa ou com R2 desligado
   archivedAt: IsoDateTime | null;
 };
+
+// Card restrito visto por quem não tem acesso (ADR 0015). São **todos** os campos: nada de
+// etiquetas, responsáveis, prazo, prioridade, contadores, capa, status ou `archivedAt`.
+type LockedCard = { id: Uuid; listId: Uuid; position: string; title: string; locked: true };
+
+// Onde cards aparecem em lista, o item é uma união discriminada por `locked`.
+type BoardCard = CardSummary | LockedCard;
 
 type ChecklistItem = { id: Uuid; checklistId: Uuid; text: string; position: string; isChecked: boolean; checkedBy: Uuid | null; checkedAt: IsoDateTime | null };
 type Checklist = { id: Uuid; cardId: Uuid; title: string; createdAt: IsoDateTime; items: ChecklistItem[] /* ordenados por position */ };
@@ -72,6 +94,7 @@ type Comment = { id: Uuid; cardId: Uuid; authorId: Uuid; body: string; editedAt:
 
 type CardDetail = CardSummary & {
   description: string;
+  viewerIds: Uuid[];            // vazio quando visibility = 'team'; ordem de inclusão
   completedBy: Uuid | null;
   createdBy: Uuid; createdAt: IsoDateTime; updatedAt: IsoDateTime;
   board: { id: Uuid; name: string; archived: boolean };
@@ -108,6 +131,10 @@ Limites de entrada (Zod):
 | `checklistItem.text` | 1–500 |
 | `comment.body` | 1–10.000 |
 | `token` | 43 caracteres base64url |
+| `cover.contentType` | um de `image/jpeg`, `image/png`, `image/webp`, `image/avif` |
+| `cover.sizeBytes` | inteiro de 1 a 5.242.880 (5 MiB) |
+| `cover.objectKey` | `covers/<cardId>/<32 caracteres base64url>`, com o `cardId` da própria rota |
+| `cover.width` / `cover.height` | inteiro de 1 a 20.000, ou ausente |
 
 ## 3. Erros
 
@@ -122,6 +149,7 @@ Envelope: `{ "error": { "code": ErrorCode, "message": string, "details"?: { path
 | 401 | `INVALID_CREDENTIALS` | login falhou (mensagem genérica: "E-mail ou senha incorretos.") |
 | 403 | `FORBIDDEN` | papel/autoria insuficiente |
 | 403 | `CSRF_REJECTED` | Origin/header CSRF ausente ou inválido |
+| 403 | `CARD_RESTRICTED` | card `restricted` e o usuário não é Admin nem está na lista de acesso (mensagem: "Você não tem acesso a este card.") |
 | 403 | `SETUP_TOKEN_INVALID` | setup com `SETUP_TOKEN` configurado e `setupToken` ausente ou errado (mensagem: "Código de configuração inválido.") |
 | 404 | `NOT_FOUND` | recurso inexistente (ou notificação de outro usuário) |
 | 404 | `SETUP_REQUIRED` | rota que exige instância configurada chamada antes do setup (login) |
@@ -138,6 +166,8 @@ Envelope: `{ "error": { "code": ErrorCode, "message": string, "details"?: { path
 | 409 | `LIST_IS_DONE_LIST` | criar card direto na lista de conclusão |
 | 409 | `INVALID_PLACEMENT` | `placement.after.id` não é irmão ativo no destino (ou é o próprio item) |
 | 409 | `LABEL_BOARD_MISMATCH` | aplicar etiqueta de outro quadro |
+| 409 | `CARD_NOT_RESTRICTED` | mexer na lista de acesso de um card com `visibility: 'team'` |
+| 409 | `COVER_UPLOAD_INVALID` | confirmação de capa cujo objeto não existe no R2, está acima do limite, tem outro `Content-Type` ou não começa com a assinatura de uma imagem aceita |
 | 409 | `CONFLICT` | violação de unicidade não mapeada |
 | 410 | `TOKEN_INVALID` | token de convite/reset inexistente, expirado, usado ou revogado (mensagem: "Convite inválido." / "Link de redefinição inválido.") |
 | 413 | `PAYLOAD_TOO_LARGE` | corpo > 256 KB |
@@ -146,10 +176,11 @@ Envelope: `{ "error": { "code": ErrorCode, "message": string, "details"?: { path
 | 429 | `RATE_LIMITED` | rate limit geral/rotas de token (`Retry-After`) |
 | 500 | `INTERNAL_ERROR` | inesperado |
 | 503 | `SERVICE_UNAVAILABLE` | health com banco fora |
+| 503 | `COVER_STORAGE_UNAVAILABLE` | rota de capa com R2 não configurado ou fora do ar (mensagem: "As capas de card não estão disponíveis agora.") |
 
 Regras transversais aplicadas por todas as rotas de conteúdo:
 - Recurso de quadro arquivado: leitura ok; mutação → `409 BOARD_ARCHIVED` (exceto `restore` e `DELETE` do quadro).
-- Ordem de checagem: autenticação (401) → CSRF (403) → validação (400) → existência (404) → permissão (403) → estado (409).
+- Ordem de checagem: autenticação (401) → CSRF (403) → validação (400) → existência (404) → permissão (403) → estado (409). Em rotas de card, `403 CARD_RESTRICTED` (acesso ao card) vem antes de `403 FORBIDDEN` (papel) e de qualquer 409.
 
 ## 4. Saúde e setup
 
@@ -164,7 +195,7 @@ Body `{ workspaceName: string, timezone?: string /* default America/Sao_Paulo */
 - Com `SETUP_TOKEN` configurado: `setupToken` ausente ou diferente → `403 SETUP_TOKEN_INVALID`, checado antes de consultar o banco e de gerar o hash da senha (comparação em tempo constante). Sem `SETUP_TOKEN` (desenvolvimento local), o campo é ignorado. Tentativas erradas contam no rate limit da rota.
 - Transação com `pg_advisory_xact_lock`; se já há usuário → `409 SETUP_ALREADY_DONE`.
 - Cria/atualiza `workspace`, cria usuário `admin`, cria sessão (Set-Cookie).
-201 `{ user: SessionUser, workspace: Workspace }`.
+201 `{ user: SessionUser, workspace: Workspace, features: Features }`.
 
 ## 5. Autenticação
 
@@ -172,13 +203,13 @@ Body `{ workspaceName: string, timezone?: string /* default America/Sao_Paulo */
 Body `{ email, password }` (password aqui: 1–256, para não revelar política).
 - Bloqueios: `overview.md` §6.4. Sem usuários → `404 SETUP_REQUIRED`.
 - Falha (e-mail inexistente, senha errada, usuário desativado/anonimizado) → `401 INVALID_CREDENTIALS`.
-200 `{ user: SessionUser, workspace: Workspace }` + Set-Cookie.
+200 `{ user: SessionUser, workspace: Workspace, features: Features }` + Set-Cookie.
 
 ### `POST /api/auth/logout` · Auth
 Apaga a sessão atual e o cookie. 204. Sem sessão também retorna 204 (idempotente; CSRF ainda exigido).
 
 ### `GET /api/auth/me` · Auth
-200 `{ user: SessionUser, workspace: Workspace }`.
+200 `{ user: SessionUser, workspace: Workspace, features: Features }`.
 
 ### `POST /api/auth/invites/lookup` · Pública · rate limit 10/15min/IP
 Body `{ token }`. 200 `{ email: string | null, role: Role, expiresAt }` · 410 `TOKEN_INVALID`.
@@ -187,7 +218,7 @@ Body `{ token }`. 200 `{ email: string | null, role: Role, expiresAt }` · 410 `
 Body `{ token, name, email, password }`
 - Consome o token na mesma transação da criação do usuário (papel do convite).
 - Convite com e-mail e e-mail diferente → `409 INVITE_EMAIL_MISMATCH`. E-mail já existe → `409 EMAIL_TAKEN` (token **não** é consumido).
-201 `{ user: SessionUser, workspace: Workspace }` + Set-Cookie.
+201 `{ user: SessionUser, workspace: Workspace, features: Features }` + Set-Cookie.
 
 ### `POST /api/auth/password-resets/lookup` · Pública · rate limit 10/15min/IP
 Body `{ token }`. 200 `{ userName: string, expiresAt }` · 410 `TOKEN_INVALID` (também se o usuário alvo não está ativo).
@@ -210,7 +241,7 @@ Body `{ currentPassword, newPassword }`. `currentPassword` segue a regra do logi
 204.
 
 ### `GET /api/me/cards` · Auth
-Cards `open`, não arquivados, em lista e quadro não arquivados, com o usuário entre os responsáveis. Ordenados por `dueAt ASC NULLS LAST`, depois prioridade (`urgent`, `high`, `medium`, `low`, sem prioridade), depois `createdAt ASC`. O agrupamento (Atrasados/Vencendo/Com prazo/Sem prazo) é feito no front com `getDueState`, preservando essa ordem dentro de cada grupo (D1).
+Cards `open`, não arquivados, em lista e quadro não arquivados, com o usuário entre os responsáveis **e acessíveis a ele** (card restrito sem acesso é omitido, não bloqueado: ADR 0015). Ordenados por `dueAt ASC NULLS LAST`, depois prioridade (`urgent`, `high`, `medium`, `low`, sem prioridade), depois `createdAt ASC`. O agrupamento (Atrasados/Vencendo/Com prazo/Sem prazo) é feito no front com `getDueState`, preservando essa ordem dentro de cada grupo (D1).
 200 `{ cards: Array<CardSummary & { boardName: string; listName: string; listColor: PaletteColor }> }`.
 
 ## 7. Usuários
@@ -271,11 +302,13 @@ Payload do quadro (arquivado também pode ser lido):
 {
   board: Board;
   lists: List[];          // só não arquivadas, por position
-  cards: CardSummary[];   // não arquivados, de listas não arquivadas, por (listId, position)
+  cards: BoardCard[];     // não arquivados, de listas não arquivadas, por (listId, position)
   labels: Label[];        // por name
 }
 ```
-Implementação: 6 consultas (board, lists, cards com agregados `checklist`/`commentCount` via subconsultas agrupadas, `card_labels` do quadro, `card_assignees` do quadro, labels). Sem N+1 (§18.3, item 31).
+Implementação: 6 consultas (board, lists, cards com agregados `checklist`/`commentCount` via subconsultas agrupadas e `LEFT JOIN card_covers`, `card_labels` do quadro, `card_assignees` do quadro, labels). Sem N+1 (§18.3, item 31).
+
+Card restrito sem acesso entra como `LockedCard` (`{ id, listId, position, title, locked: true }`) e **não** aparece nas consultas de agregados, etiquetas e responsáveis (§18.7, item 48). Capa: `cover.url` assinada na hora, sem ida ao R2.
 
 ### `PATCH /api/boards/:boardId` · Auth
 Body `{ name }`. `BOARD_ARCHIVED` se arquivado. 200 `{ board }`.
@@ -287,7 +320,8 @@ Body `{ name }`. `BOARD_ARCHIVED` se arquivado. 200 `{ board }`.
 Body `{ confirmName: string }` (comparação exata após trim). Diferente → `400 CONFIRMATION_MISMATCH`. Exclusão definitiva com cascata. 204.
 
 ### `GET /api/boards/:boardId/archived` · Auth
-200 `{ lists: List[] /* arquivadas, por archivedAt desc */, cards: Array<CardSummary & { listName: string; listArchived: boolean }> /* arquivados individualmente, por archivedAt desc */ }`.
+200 `{ lists: List[] /* arquivadas, por archivedAt desc */, cards: Array<(CardSummary & { listName: string; listArchived: boolean }) | LockedCard> /* arquivados individualmente, por archivedAt desc */ }`.
+Card restrito sem acesso aparece como `LockedCard` (sem `listName`, sem `archivedAt`), mantendo a ordem por `archivedAt` desc calculada no servidor. Restaurar ou excluir esse card → `403 CARD_RESTRICTED`.
 
 ## 10. Listas
 
@@ -298,7 +332,7 @@ Body `{ name, color?: PaletteColor /* default: próxima cor da paleta após a co
 Body `{ name?: string, isDoneList?: boolean, color?: PaletteColor }` (ao menos um). Valor fora da paleta → 400.
 - `isDoneList: true`: na mesma transação desmarca a lista de conclusão anterior do quadro. Lista arquivada → `409 LIST_ARCHIVED`.
 - `isDoneList: true` com cards abertos não arquivados na lista: todos são concluídos na mesma transação (ator = usuário; atividade por card), para manter RN12. Desmarcar não reabre ninguém (overview §4.2).
-200 `{ lists: List[], completedCardIds: Uuid[] }` — **todas** as listas ativas do quadro (a marcação pode ter mudado em outra) e os cards concluídos por esta ação (`[]` se nenhum).
+200 `{ lists: List[], completedCardIds: Uuid[] }` — **todas** as listas ativas do quadro (a marcação pode ter mudado em outra) e os cards concluídos por esta ação (`[]` se nenhum). A conclusão em massa inclui cards `restricted` que o ator não vê (RN12 vale acima da restrição; única exceção à regra de acesso, §18.7 item 51), então `completedCardIds` pode trazer ids de cards bloqueados — ids que a pessoa já enxerga no quadro.
 
 ### `POST /api/lists/:listId/move` · Auth
 Body `{ placement: Placement }` (dentro do mesmo quadro). 200 `{ list: List }`.
@@ -311,12 +345,14 @@ Restaura no **fim** do quadro (nova `position`); cards voltam com as posições 
 
 ## 11. Cards
 
+> **Acesso ao card (Fatia 11, ADR 0015).** Toda rota desta seção (e as de checklists, comentários, etiquetas e responsáveis do card) checa o acesso logo depois do 404 e antes de qualquer 409: card `restricted` para quem não é Admin nem está em `viewerIds` → `403 CARD_RESTRICTED`. A checagem é uma função só (`modules/cards/access.ts`), chamada de dentro do `lockCard()` que todas as mutações já usam. Card `team` mantém a regra RN05 (todo usuário ativo lê e edita).
+
 ### `POST /api/lists/:listId/cards` · Auth
 Body `{ title }`. Cria no fim da lista. Lista arquivada → `LIST_ARCHIVED`; lista de conclusão → `LIST_IS_DONE_LIST`. Atividade `card_created`.
 201 `{ card: CardSummary }`.
 
 ### `GET /api/cards/:cardId` · Auth
-200 `{ card: CardDetail }`. Card arquivado também é retornado.
+200 `{ card: CardDetail }`. Card arquivado também é retornado. Card restrito sem acesso → `403 CARD_RESTRICTED` (não 404: o quadro já mostra que ele existe).
 
 ### `PATCH /api/cards/:cardId` · Auth
 Body `{ title?: string, description?: string, due?: DueInput | null, priority?: CardPriority | null }` (ao menos um). `due: null` remove o prazo; `priority: null` remove a prioridade. Prioridade não altera `position`.
@@ -351,7 +387,7 @@ Restaura no **fim** da lista original. Lista arquivada → `409 LIST_ARCHIVED`. 
 Exclusão definitiva (cascata). 204.
 
 ### `PUT /api/cards/:cardId/assignees/:userId` · Auth
-Adiciona responsável. Usuário inexistente → 404; não ativo → `409 USER_NOT_ACTIVE`. Se novo: atividade `card_assignee_added` e notificação `card_assigned` para o usuário (se ≠ ator). Idempotente (já atribuído: sem atividade/notificação).
+Adiciona responsável. Usuário inexistente → 404; não ativo → `409 USER_NOT_ACTIVE`. Se novo: atividade `card_assignee_added` e notificação `card_assigned` para o usuário (se ≠ ator). Idempotente (já atribuído: sem atividade/notificação). Em card `restricted`, a atribuição nova também inclui a pessoa na lista de acesso (`card_viewer_added`), na mesma transação: responsável sempre enxerga o card (ADR 0015).
 200 `{ assigneeIds: Uuid[] }`.
 
 ### `DELETE /api/cards/:cardId/assignees/:userId` · Auth
@@ -364,7 +400,42 @@ Etiqueta de outro quadro → `409 LABEL_BOARD_MISMATCH`. Idempotente. 200 `{ lab
 Idempotente. 200 `{ labelIds: Uuid[] }`.
 
 ### `GET /api/cards/:cardId/activity` · Auth
-Até 500 itens, mais recentes primeiro. 200 `{ activities: Activity[] }`.
+Até 500 itens, mais recentes primeiro. 200 `{ activities: Activity[] }` · 403 `CARD_RESTRICTED`.
+
+### `PUT /api/cards/:cardId/visibility` · Auth
+Body `{ visibility: CardVisibility }`. Idempotente (mesmo valor → 200 sem atividade).
+- `'restricted'`: na mesma transação, o **ator** e todos os **responsáveis atuais** entram em `viewerIds` (cada inclusão nova gera `card_viewer_added`); atividade `card_visibility_changed`.
+- `'team'`: apaga a lista de acesso (`viewerIds` volta a `[]`, sem atividade por pessoa); atividade `card_visibility_changed`.
+- Ordem: 400 → 404 → `403 CARD_RESTRICTED` → `409 BOARD_ARCHIVED`. Card arquivado é aceito (como o `PATCH`, §18.2 item 21).
+200 `{ card: CardDetail }`.
+
+### `PUT /api/cards/:cardId/viewers/:userId` · Auth
+Adiciona à lista de acesso. Card `team` → `409 CARD_NOT_RESTRICTED`. Usuário inexistente → 404; não ativo (inclusive anonimizado) → `409 USER_NOT_ACTIVE`. Se novo: atividade `card_viewer_added`. Idempotente.
+200 `{ viewerIds: Uuid[] }` (ordem de inclusão).
+
+### `DELETE /api/cards/:cardId/viewers/:userId` · Auth
+Remove da lista de acesso (qualquer status de usuário), inclusive a si mesmo — quem se remove perde o acesso ao card na hora (a UI confirma antes). Card `team` → `409 CARD_NOT_RESTRICTED`. Se existia: atividade `card_viewer_removed`. Idempotente. Não existe regra de "último viewer": Admin sempre alcança o card.
+200 `{ viewerIds: Uuid[] }`.
+
+### `POST /api/cards/:cardId/cover/upload-url` · Auth · rate limit 30/5min/usuário
+Pede a URL de upload direto para o R2 (ADR 0016). Não grava nada.
+Body `{ contentType: string, sizeBytes: number }` (limites na tabela de §2).
+- R2 não configurado ou fora do ar → `503 COVER_STORAGE_UNAVAILABLE`.
+- Ordem: 400 → 404 → `403 CARD_RESTRICTED` → `409 BOARD_ARCHIVED` → 503.
+200 `{ uploadUrl: string, objectKey: string, expiresAt: IsoDateTime, headers: Record<string,string> }` — a URL vale 5 minutos; `headers` traz o `Content-Type` que o `PUT` no R2 precisa repetir (o `Content-Length` é assinado com `sizeBytes` e o navegador o envia sozinho).
+
+### `PUT /api/cards/:cardId/cover` · Auth
+Confirma o upload e passa a ser a capa do card.
+Body `{ objectKey: string, width?: number, height?: number }`.
+- `objectKey` fora do prefixo `covers/<cardId>/` → `400 VALIDATION_ERROR`.
+- A API confere no R2: objeto existe, `Content-Length` ≤ 5 MiB, `Content-Type` na lista e os 16 primeiros bytes com assinatura do formato declarado. Falhou → o objeto é apagado e a resposta é `409 COVER_UPLOAD_INVALID`.
+- Capa anterior (se houver) é apagada do R2 depois do commit. Atividade `card_cover_changed`.
+- Ordem: 400 → 404 → `403 CARD_RESTRICTED` → `409 BOARD_ARCHIVED` → 503 → `409 COVER_UPLOAD_INVALID`.
+200 `{ card: CardDetail }`.
+
+### `DELETE /api/cards/:cardId/cover` · Auth
+Remove a capa (linha e objeto). Idempotente (sem capa → 200 sem atividade). Atividade `card_cover_removed`. Com R2 fora do ar, a linha **não** é apagada e a resposta é `503 COVER_STORAGE_UNAVAILABLE`.
+200 `{ card: CardDetail }`.
 
 ## 12. Etiquetas
 
@@ -421,6 +492,8 @@ type Notification = {
 };
 ```
 
+Notificação de card restrito a que o usuário perdeu o acesso é **omitida** da listagem e do `unreadCount` (o título do card sairia na resposta). Ela não é apagada: volta a aparecer se o acesso voltar (ADR 0015).
+
 ### `GET /api/notifications?limit=30&before=<IsoDateTime>` · Auth
 Só do usuário da sessão, mais recentes primeiro. `limit` 1–100 (default 30). `before` = `createdAt` do último item da página anterior.
 200 `{ notifications: Notification[], unreadCount: number, nextBefore: IsoDateTime | null }`.
@@ -443,6 +516,8 @@ De outro usuário → `404 NOT_FOUND`. Idempotente. 204.
 | users (sem e-mail) | | x | | |
 | admin/* | | | x | |
 | boards/lists/cards/labels/checklists: ler, criar, editar, mover, arquivar, restaurar | | x | | |
+| card `restricted`: ler, editar, comentar, mover, mudar visibilidade e lista de acesso | | x (só quem está na lista de acesso) | x (sempre) | |
+| capa do card (pedir URL, confirmar, remover) | | x (com acesso ao card) | | |
 | excluir quadro, excluir card | | | x | |
 | editar comentário | | | | x |
 | excluir comentário | | | x | x |
@@ -540,3 +615,25 @@ Preparação do deploy público (`docs/ops/deploy-render.md`). Muda o contrato d
     - `POST /api/setup` ganha `setupToken?: string` (máximo 200 caracteres, sem `trim`; acima disso `400 VALIDATION_ERROR` em `setupToken`). Com `SETUP_TOKEN` configurado, ausente ou errado → `403 SETUP_TOKEN_INVALID` ("Código de configuração inválido."), **antes** do atalho de `SETUP_ALREADY_DONE` e do Argon2id. A comparação calcula SHA-256 dos dois lados e usa `crypto.timingSafeEqual` (tamanho e conteúdo não vazam pelo tempo).
     - O rate limit da rota (5 req/15 min por IP) continua valendo e conta as tentativas com código errado. `setupToken` entra no `redact` dos logs.
     - Sem `SETUP_TOKEN` (dev local, testes, E2E): comportamento anterior, `requiresSetupToken: false`.
+
+### 18.7 Fatia 11: cards restritos e capa do card (v1.11)
+
+Decisões fechadas ao desenhar a Fatia 11 (ADR 0015 e ADR 0016). Mudam schema e exigem migration (`0008`).
+
+**Visibilidade (ADR 0015)**
+
+47. **Um lugar só decide acesso.** `modules/cards/access.ts` exporta a função pura (`canAccessCard`), o `assertCardAccess` (`403 CARD_RESTRICTED`) e o predicado SQL (`cardAccessCondition`). O `lockCard()` de `modules/cards/service.ts` — usado por cards, checklists, comentários, etiquetas e responsáveis — passa a receber o ator e chamar o `assertCardAccess` **depois** do 404 do card e **antes** do `409 BOARD_ARCHIVED`, mantendo a ordem 404 → 403 → 409 e cobrindo por construção toda rota que use o lock. Rotas de leitura (`GET /api/cards/:cardId`, `/activity`) chamam o mesmo assert. A checagem roda sobre a linha **bloqueada**: restringir o card em paralelo não deixa passar mutação.
+48. **Payload bloqueado é outro tipo, não um card com nulos.** `LockedCard = { id, listId, position, title, locked: true }`; `CardSummary` ganha `locked: false` e as listas passam a ser união discriminada (`BoardCard`). O serializer do Fastify corta qualquer campo extra. Além disso, no payload do quadro e em arquivados, as subconsultas de `checklist`/`commentCount` e as consultas de `card_labels`/`card_assignees` recebem o predicado de acesso: dado de card bloqueado não sai do banco. `CardMutationResult.card` é sempre `CardSummary` (quem mutou tem acesso).
+49. **Filtrar, não bloquear, onde o card é "meu trabalho"**: `GET /api/me/cards` e a listagem/contador de notificações omitem cards sem acesso. A ordem e a paginação (cursor `before`) continuam calculadas depois do filtro, então `unreadCount` e a página saem do mesmo snapshot e não divergem.
+50. **Responsável de card restrito é sempre viewer.** `PUT /api/cards/:cardId/assignees/:userId` insere a pessoa em `card_viewers` na mesma transação (atividade `card_viewer_added` além de `card_assignee_added`). Remover o responsável **não** remove o acesso: só `DELETE .../viewers/:userId` remove. Restringir um card (`PUT .../visibility`) inclui o ator e os responsáveis atuais; voltar para `team` apaga a lista inteira.
+51. **Exceção única à regra de acesso:** `PATCH /api/lists/:listId { isDoneList: true }` conclui os cards abertos da lista **inclusive os restritos que o ator não vê** (RN12 não pode quebrar por causa de uma restrição). `completedCardIds` pode, portanto, conter ids de cards bloqueados — ids que a pessoa já vê no quadro. Nenhum outro campo desses cards é exposto. Arquivar/restaurar/excluir a **lista** ou o **quadro** segue a mesma lógica: são ações de contêiner, não de card.
+52. **Atividades novas**: `card_visibility_changed` (`{ from, to }`), `card_viewer_added` (`{ userId }`), `card_viewer_removed` (`{ userId }`), `card_cover_changed` (`{}`) e `card_cover_removed` (`{}`). Só são lidas por quem tem acesso ao card (a rota de atividade responde 403).
+53. **Compatibilidade**: `cards.visibility` nasce `not null default 'team'`, então todo o acervo continua visível para a equipe e nenhum cliente antigo quebra por falta de campo. Um front que ignore `locked` mostraria um card sem dados — por isso `locked` é obrigatório nos dois lados da união.
+
+**Capa (ADR 0016)**
+
+54. **Upload em três passos** (`POST .../cover/upload-url` → `PUT` direto no R2 → `PUT .../cover`). A URL assinada de escrita vale 5 min e assina `content-type` e `content-length`: não dá para enviar outro tipo nem outro tamanho. A confirmação refaz a checagem com `HEAD` e lê 16 bytes com `Range` para validar a assinatura do formato; o que não passa é apagado e vira `409 COVER_UPLOAD_INVALID`. Não existe estado de "upload pendente" no banco: a chave só pode ter sido criada por uma URL que a API assinou para aquele card.
+55. **URL de leitura com janela fixa.** O vencimento é arredondado para o início da janela de 5 minutos e vale 15 min a partir dali (validade efetiva de 10 a 15 min). Assim a string não muda entre os refetches de 30 s do quadro, o cache do navegador funciona e a imagem não pisca. A assinatura é HMAC local (sem ida ao R2) e inclui `response-cache-control: private, max-age=600`. `cover.expiresAt` informa o vencimento para o front decidir refetch.
+56. **Chave**: `covers/<cardId>/<32 caracteres base64url>` (24 bytes aleatórios), com `CHECK` no banco amarrando a chave ao `card_id` da linha. Trocar a capa apaga o objeto anterior; excluir card ou quadro apaga o objeto; upload nunca confirmado vira órfão e é apagado pela limpeza diária (lista o prefixo `covers/`, compara com `card_covers`, apaga o que não tem linha e tem mais de 24 h). Falha ao apagar no R2 nunca desfaz a transação do banco: só log e órfão.
+57. **Recurso opcional e tudo-ou-nada.** Sem as quatro variáveis do R2, `features.cardCovers` é `false`, `cover` é sempre `null` e as rotas de capa respondem `503 COVER_STORAGE_UNAVAILABLE`. `features` entra nas respostas de `POST /api/setup`, `POST /api/auth/login` e `GET /api/auth/me` (mesmo schema de sessão), porque é o que a SPA já lê no boot.
+58. **Tipos aceitos**: `image/jpeg`, `image/png`, `image/webp`, `image/avif`; máximo de 5 MiB. Sem SVG (HTML executável) e sem GIF (animação pesada). O front reduz a imagem para no máximo 1600 px no maior lado antes de enviar; o limite do servidor continua valendo de qualquer forma.

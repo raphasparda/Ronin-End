@@ -6,6 +6,7 @@
 > v1.4: §5 implementado para as fatias 2–9 (migrations `0001`–`0007`): FK composta de I6, `CHECK`s extras, trigger append-only da atividade e índices de FK para cascatas (§5.1.1).
 > v1.5: revisão de segurança: reserva atômica de tentativa no login e na troca de senha e limites de rota (§6.4), revogação dos tokens de quem perde o papel (§6.5), logs de erro de banco sem valores (§6.7), configuração fail-closed `NODE_ENV` × `APP_ORIGIN` e requisitos do deploy (§3, §6.8). Detalhes em `api.md` §18.5.
 > v1.6: setup inicial protegido por `SETUP_TOKEN`, obrigatório em produção (§3, §6.8); `TRUST_PROXY` aceita número de saltos e lista de IPs/CIDRs (§3, §6.8); `dist/migrate.js` aplica as migrations sem `tsx` e `pnpm start:prod` roda migrations + servidor (§3, §10).
+> v1.7 (Fatia 11): **cards restritos** (`cards.visibility`, `card_viewers`, payload bloqueado e checagem única de acesso: §4.4, §5.1, §6.6, ADR 0015) e **capa do card** no Cloudflare R2 com upload direto e URLs assinadas (`card_covers`, variáveis do R2, §4.5, §5.1, §6.9, ADR 0016).
 > Fonte de requisitos: `docs/product/scope.md` (inclui "Decisões confirmadas pelo cliente").
 > Documentos irmãos: `api.md` (contrato REST), `plan.md` (plano de implementação), `adr/` (decisões).
 
@@ -28,18 +29,21 @@ flowchart LR
     PG[("PostgreSQL 18")]
   end
   SHARED["@raphasparda/ronin-shared (ronin-api/packages/shared)<br/>schemas Zod, códigos de erro,<br/>regras puras (estado do prazo)"]
+  R2[("Cloudflare R2<br/>bucket privado (capas)<br/>opcional, Fatia 11")]
 
   WEB -- "HTTPS mesma origem<br/>cookie de sessão httpOnly" --> CADDY
   CADDY -- "/api/*" --> API
   CADDY -- "/* (SPA estática)" --> WEB
   API -- "Drizzle (pg)" --> PG
+  API -- "SigV4: assina PUT/GET,<br/>HEAD/DELETE/List" --> R2
+  WEB -- "PUT direto (URL assinada)<br/>GET da imagem (URL assinada)" --> R2
   SHARED -. importado por .-> WEB
   SHARED -. importado por .-> API
 ```
 
 - **Mesma origem** em dev e produção: nada de CORS. Em dev, o Vite faz proxy de `/api` para a API. Em produção, o Caddy serve a SPA e faz proxy de `/api` (ADR 0009).
 - **Sem tempo real**: o front recarrega por foco da aba e polling (ADR 0006).
-- **Sem BaaS, sem serviços externos, sem CDN**: fontes e assets são servidos pela própria instância.
+- **Sem BaaS, sem serviços externos, sem CDN**: fontes e assets são servidos pela própria instância. **Exceção a partir da Fatia 11:** a imagem de capa do card fica no **Cloudflare R2** (bucket privado, leitura por URL assinada de curta duração), por decisão do cliente e limitada a esse conteúdo (ADR 0016). O recurso é opcional: sem R2 configurado, a instância funciona igual, só sem capa.
 - **Processo único da API** (sem réplicas no MVP). Isso permite jobs de manutenção por `setInterval` e rate limit em memória. Se um dia houver réplicas, revisar ADR 0001.
 
 ## 2. Stack e dependências
@@ -106,13 +110,16 @@ kanban/
 │  │  │  │  ├─ password.ts         # hash/verify Argon2id
 │  │  │  │  ├─ tokens.ts           # randomToken(), sha256()
 │  │  │  │  ├─ ordering.ts         # computePosition() com lock do pai
+│  │  │  │  ├─ r2.ts               # (Fatia 11) SigV4 próprio: presign PUT/GET, HEAD, DELETE, List
 │  │  │  │  └─ time.ts             # conversões com fuso do workspace
 │  │  │  └─ modules/
 │  │  │     ├─ setup/  auth/  me/  users/  admin/
 │  │  │     ├─ boards/ lists/ cards/ labels/ checklists/ comments/
 │  │  │     ├─ activity/           # recordActivity(tx, ...) e leitura
 │  │  │     ├─ notifications/      # notify(tx, ...) e rotas
-│  │  │     └─ completion/         # serviço único de concluir/reabrir (ADR 0010)
+│  │  │     ├─ completion/         # serviço único de concluir/reabrir (ADR 0010)
+│  │  │     └─ cards/access.ts     # (Fatia 11) checagem única de acesso ao card (ADR 0015)
+│  │  │        cards/cover.ts      # (Fatia 11) serviço da capa: assinar, confirmar, remover
 │  │  │        (cada módulo: routes.ts + service.ts; testes em *.test.ts ao lado)
 │  │  ├─ drizzle/                  # migrations SQL geradas (commitadas)
 │  │  ├─ test/                     # setup global (migrate, truncate), factories, helpers de login
@@ -204,6 +211,14 @@ Variáveis de ambiente (`.env.example`):
 | `TRUST_PROXY` | `false` | em quem confiar para ler `X-Forwarded-For` (IP real em `request.ip`, usado no bloqueio por IP e nos limites de rota). Valores: `false` (padrão: ignora o header); `true` (confia em tudo: **forjável**, evite); número de saltos, inteiro de 1 a 100 (ex.: `1` = confia só no proxy que conectou e usa o último endereço do header); lista de IPs/CIDRs separados por vírgula (ex.: `10.0.0.0/8,127.0.0.1`; aceita também `loopback`, `linklocal`, `uniquelocal`). Atrás do Caddy, use o IP/sub-rede dele; no Render, veja `docs/ops/deploy-render.md` (§6.8) |
 | `SETUP_TOKEN` | (vazio) | código exigido no `POST /api/setup` (16 a 200 caracteres). Opcional em dev; **obrigatório com `NODE_ENV=production`** (a API não sobe sem ele, §6.8). Gere com `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"` |
 | `LOG_LEVEL` | `info` | |
+| `R2_ACCOUNT_ID` | (vazio) | capa do card (Fatia 11, ADR 0016). Id da conta Cloudflare, usado para montar o endpoint padrão |
+| `R2_BUCKET` | (vazio) | nome do bucket **privado** das capas |
+| `R2_ACCESS_KEY_ID` | (vazio) | token de API do R2 com permissão só nesse bucket |
+| `R2_SECRET_ACCESS_KEY` | (vazio) | segredo do token; entra no `redact` dos logs |
+| `R2_ENDPOINT` | (vazio) | opcional. Padrão: `https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com` |
+| `R2_PUBLIC_BASE_URL` | (vazio) | opcional. Base usada para montar as URLs **assinadas** de leitura, quando houver domínio próprio apontado para o endpoint S3 do bucket. Vazio = usa o endpoint. **Não** é URL de bucket público: o bucket continua privado |
+
+As quatro primeiras variáveis do R2 são **tudo ou nada**: `config/env.ts` recusa subir com parte delas (§6.9). Sem nenhuma, o recurso de capa fica desligado (`features.cardCovers: false`) e o resto do app funciona igual.
 
 ## 4. Modelo de domínio
 
@@ -216,6 +231,8 @@ classDiagram
   Board "1" -- "*" Label
   List "1" -- "*" Card
   Card "*" -- "*" User : assignees
+  Card "*" -- "*" User : viewers do card restrito
+  Card "1" -- "0..1" CardCover
   Card "*" -- "*" Label
   Card "1" -- "*" Checklist
   Checklist "1" -- "*" ChecklistItem
@@ -240,6 +257,8 @@ classDiagram
 | I10 | Quadro arquivado é somente leitura (exceto restaurar e excluir). | `assertBoardWritable(tx, boardId)` em toda mutação de conteúdo |
 | I11 | Não se cria nem se move card para lista arquivada. | service de cards |
 | I12 | Atividade é append-only. | não há rota de update/delete; só cascata ao excluir card/quadro |
+| I13 | Card `restricted` só é lido/mutado por Admin ou por quem está em `card_viewers`; card `team` segue RN05. Toda mutação passa pela mesma checagem. | `modules/cards/access.ts` chamado de dentro de `lockCard()` e das leituras de card (ADR 0015) |
+| I14 | Um card tem 0 ou 1 capa, e a chave do objeto no R2 pertence ao próprio card. | `card_covers` com PK `card_id` + `CHECK` que compara `object_key` com `card_id` (ADR 0016) |
 
 ### 4.2 Regras de conclusão (C9, RN11–RN14) — ver ADR 0010
 
@@ -268,6 +287,31 @@ Um único serviço `completion.service` aplica transições. Tudo roda na mesma 
 - A resposta devolve `dueAt` (ISO UTC) e `dueHasTime`. O front exibe no fuso do workspace (não do navegador).
 - Estado do prazo (`packages/shared/src/domain/due-state.ts`, `getDueState({ status, dueAt }, now)`): `completed` se card concluído; `none` se sem prazo; `overdue` se `now > dueAt`; `due_soon` se `dueAt − now ≤ 24h`; senão `scheduled`. Mesma função no front (face do card, filtro, Meus cards).
 
+### 4.4 Visibilidade do card (Fatia 11) — ver ADR 0015
+
+- `cards.visibility`: `team` (padrão, RN05: todo usuário ativo lê e edita) ou `restricted`.
+- Acesso a um card `restricted` = **Admin** (sempre) **ou** linha em `card_viewers`. Uma função só decide: `modules/cards/access.ts` (função pura, `assertCardAccess` e predicado SQL).
+- Quem não tem acesso continua vendo o card no quadro **só com título e cadeado**: a API devolve outro objeto (`LockedCard = { id, listId, position, title, locked: true }`) e nada mais. Abrir, editar, comentar, mover, arquivar, concluir → `403 CARD_RESTRICTED`.
+
+| Ação | Efeito na lista de acesso |
+|------|---------------------------|
+| `PUT /cards/:id/visibility { visibility: 'restricted' }` | ator e responsáveis atuais viram viewers (atividade `card_visibility_changed` + `card_viewer_added` por pessoa nova) |
+| `PUT /cards/:id/visibility { visibility: 'team' }` | apaga `card_viewers` do card; atividade `card_visibility_changed` |
+| `PUT /cards/:id/assignees/:userId` em card restrito | atribuição nova também insere o viewer (responsável sempre enxerga o card) |
+| `DELETE /cards/:id/assignees/:userId` | **não** remove o acesso (só a remoção explícita do viewer remove) |
+| `PUT`/`DELETE /cards/:id/viewers/:userId` | adiciona/remove; idempotente; não há regra de "último viewer" (Admin sempre alcança o card) |
+| `PATCH /lists/:id { isDoneList: true }` | conclui **todos** os cards abertos da lista, inclusive restritos que o ator não vê (RN12 vale acima da restrição; única exceção, `api.md` §18.7 item 51) |
+
+Onde o card é "meu trabalho" (`GET /api/me/cards`, notificações), o card sem acesso é **omitido**, não bloqueado.
+
+### 4.5 Capa do card (Fatia 11) — ver ADR 0016
+
+- Uma imagem por card (`card_covers`, 0..1), guardada no **Cloudflare R2** (bucket privado). O banco guarda só a chave, o tipo, o tamanho e as dimensões informadas pelo cliente.
+- Upload: a API assina um `PUT` de 5 minutos (tipo e tamanho assinados), o navegador envia direto ao R2 e confirma na API, que confere o objeto (`HEAD` + 16 primeiros bytes) antes de gravar.
+- Leitura: a API assina um `GET` por objeto e devolve em `cover.url` no payload do quadro e no detalhe. Validade entre 10 e 15 minutos, com vencimento arredondado em janelas de 5 minutos para a URL não mudar a cada polling (§6.9).
+- Tipos aceitos: `image/jpeg`, `image/png`, `image/webp`, `image/avif`; até 5 MiB. Card bloqueado (§4.4) nunca traz capa nem URL assinada.
+- Sem R2 configurado: `features.cardCovers: false`, `cover` sempre `null` e rotas de capa em `503 COVER_STORAGE_UNAVAILABLE`.
+
 ## 5. Modelo de dados (PostgreSQL)
 
 Convenções:
@@ -277,7 +321,7 @@ Convenções:
 - Usuários **nunca** são excluídos (apenas desativados/anonimizados), então FKs para `users` são `ON DELETE RESTRICT` (violação: SQLSTATE `23001`, não `23503`).
 - Enums como `pgEnum`.
 
-Enums: `user_role ('admin','member')`, `user_status ('active','deactivated')`, `auth_token_kind ('invite','password_reset')`, `card_status ('open','completed')`, `palette_color ('gray','red','orange','yellow','green','cyan','blue','purple','magenta')` (ordem do enum = ordem da paleta; usado por listas e etiquetas; valores visuais em tokens CSS, ADR 0012), `card_priority ('low','medium','high','urgent')`, `notification_type ('card_assigned','card_commented')`, `activity_type` (lista na seção 5.3).
+Enums: `user_role ('admin','member')`, `user_status ('active','deactivated')`, `auth_token_kind ('invite','password_reset')`, `card_status ('open','completed')`, `palette_color ('gray','red','orange','yellow','green','cyan','blue','purple','magenta')` (ordem do enum = ordem da paleta; usado por listas e etiquetas; valores visuais em tokens CSS, ADR 0012), `card_priority ('low','medium','high','urgent')`, `card_visibility ('team','restricted')` (Fatia 11, ADR 0015), `notification_type ('card_assigned','card_commented')`, `activity_type` (lista na seção 5.3).
 
 ### 5.1 Tabelas
 
@@ -380,6 +424,7 @@ Sem índice além da PK: toda leitura/escrita do login é por `key`; a limpeza d
 | due_at | timestamptz null | |
 | due_has_time | boolean not null | default false; `true` exige `due_at` (`CHECK`) |
 | priority | card_priority null | `null` = sem prioridade (padrão). Não afeta `position` (RN16). |
+| visibility | card_visibility not null | default `'team'` (Fatia 11). `'restricted'` ⇒ só Admin e `card_viewers` (I13). |
 | archived_at | timestamptz null | |
 | created_by | uuid FK users | |
 | created_at, updated_at | timestamptz | |
@@ -387,6 +432,21 @@ Sem índice além da PK: toda leitura/escrita do login é por `key`; a limpeza d
 Índices: `UNIQUE (list_id, position) WHERE archived_at IS NULL`; `(board_id)`; `(list_id)`; `(due_at) WHERE status = 'open' AND archived_at IS NULL`. `CHECK cards_completion_check`: `(status = 'completed' AND completed_at IS NOT NULL AND completed_by IS NOT NULL) OR (status = 'open' AND completed_at IS NULL AND completed_by IS NULL)` (reabrir limpa os dois campos).
 
 **card_assignees**: `card_id` (FK cascade), `user_id` (FK), `assigned_by` (FK), `created_at`. PK `(card_id, user_id)`; índice `(user_id)`.
+
+**card_viewers** (Fatia 11): `card_id` (FK cascade), `user_id` (FK restrict), `added_by` (FK restrict), `created_at`. PK `(card_id, user_id)`; índice `(user_id)`. Só faz sentido com `cards.visibility = 'restricted'` (voltar para `team` apaga as linhas); não há `CHECK` entre tabelas — a regra vive no serviço. Desativar ou anonimizar um usuário **não** apaga as linhas (mesmo tratamento de `card_assignees`); ele simplesmente não entra mais.
+
+**card_covers** (Fatia 11, ADR 0016)
+| coluna | tipo | regra |
+|--------|------|-------|
+| card_id | uuid PK | FK `cards` `ON DELETE CASCADE` (0..1 capa por card, I14) |
+| object_key | text not null | `UNIQUE`; `CHECK (object_key ~ ('^covers/' || card_id || '/[A-Za-z0-9_-]{32}$'))`: a chave sempre pertence ao próprio card (I14) |
+| content_type | text not null | `CHECK` em (`image/jpeg`, `image/png`, `image/webp`, `image/avif`) |
+| size_bytes | integer not null | `CHECK BETWEEN 1 AND 5242880` (5 MiB) |
+| width, height | integer null | informados pelo cliente; `CHECK` nulo ou entre 1 e 20.000 |
+| uploaded_by | uuid FK users not null | |
+| created_at, updated_at | timestamptz not null | trocar a capa é `INSERT ... ON CONFLICT (card_id) DO UPDATE` |
+
+Sem índice além da PK e do `UNIQUE (object_key)`: a leitura é sempre por card (join no payload) e a varredura de órfãos compara a lista do R2 com esta tabela.
 
 **labels**: `id`, `board_id` (FK cascade), `name` text 1–50, `color` palette_color not null, `created_at`, `updated_at`. Índice `(board_id)`.
 
@@ -418,8 +478,11 @@ Schema Drizzle em `src/db/schema/` (`workspace.ts`, `users.ts`, `auth.ts`, `boar
 | `0005_assignees_labels_priority` | 5.2 | enum `card_priority`; `cards.priority`; `card_assignees`, `labels`, `card_labels` |
 | `0006_checklists_comments` | 6.2 | `checklists`, `checklist_items`, `comments` |
 | `0007_notifications` | 7.2 | enum `notification_type`; `notifications` |
+| `0008_card_visibility_and_covers` | 11.2 | enum `card_visibility`; `cards.visibility` (`not null default 'team'`); `card_viewers`; `card_covers`; novos valores de `activity_type` |
 
 As fatias 8 e 9 não têm migration: a conclusão usa as colunas de 4.2 e "Meus cards" usa `card_assignees_user_id_idx`.
+
+Cuidado na `0008`: `ALTER TYPE activity_type ADD VALUE` roda dentro da transação da migration (PostgreSQL 12+), mas o valor novo **não pode ser usado na mesma transação**. A migration só declara os valores; quem grava atividade é o código, depois do deploy. Como `visibility` tem default, não há backfill: todo card existente passa a ser `team` (compatibilidade, `api.md` §18.7 item 53).
 
 ```mermaid
 erDiagram
@@ -489,8 +552,23 @@ erDiagram
     timestamptz due_at
     boolean due_has_time
     card_priority priority "nula"
+    card_visibility visibility "team | restricted"
     uuid created_by FK
     timestamptz archived_at
+  }
+  card_viewers {
+    uuid card_id PK,FK
+    uuid user_id PK,FK
+    uuid added_by FK
+  }
+  card_covers {
+    uuid card_id PK,FK
+    text object_key UK "covers/<cardId>/<32>"
+    text content_type
+    integer size_bytes
+    integer width
+    integer height
+    uuid uploaded_by FK
   }
   card_activities {
     uuid id PK
@@ -559,6 +637,10 @@ erDiagram
   users ||--o{ card_activities : "ator (RESTRICT)"
   cards ||--o{ card_assignees : "CASCADE"
   users ||--o{ card_assignees : "RESTRICT"
+  cards ||--o{ card_viewers : "CASCADE"
+  users ||--o{ card_viewers : "RESTRICT"
+  cards ||--o| card_covers : "CASCADE"
+  users ||--o{ card_covers : "enviou (RESTRICT)"
   cards ||--o{ card_labels : "CASCADE"
   labels ||--o{ card_labels : "CASCADE"
   cards ||--o{ checklists : "CASCADE"
@@ -592,6 +674,10 @@ erDiagram
 | `card_activities_board_id_idx (board_id)` | cascata de `DELETE boards` (sem ele, varredura da maior tabela do sistema) |
 | `card_assignees_pkey (card_id, user_id)` | payload/detalhe (`card_id = ANY(...)`), idempotência do `PUT`, cascata do card |
 | `card_assignees_user_id_idx (user_id)` | Meus cards (`user_id = $me`); 3.360 atribuições em 10.000 cards: 5 ms medido |
+| `card_viewers_pkey (card_id, user_id)` | `EXISTS` de acesso por card no payload do quadro, no detalhe e nas mutações (I13); idempotência do `PUT`; cascata do card |
+| `card_viewers_user_id_idx (user_id)` | filtro de acesso em "Meus cards" e nas notificações, onde o usuário é quem lidera a consulta |
+| `card_covers_pkey (card_id)` | `LEFT JOIN` da capa no payload do quadro e no detalhe; cascata do card |
+| `card_covers_object_key_unique (object_key)` | comparação com a listagem do R2 na limpeza de órfãos; garante uma chave por objeto |
 | `labels_board_id_idx (board_id)` | payload do quadro e cascata |
 | `card_labels_pkey (card_id, label_id)` | payload/detalhe, idempotência, cascata do card |
 | `card_labels_label_id_idx (label_id)` | excluir etiqueta remove de todos os cards (cascata) |
@@ -603,7 +689,7 @@ erDiagram
 | `notifications_card_id_idx (card_id)` | cascata ao excluir card/quadro |
 | `notifications_comment_id_idx (comment_id) WHERE NOT NULL` | `ON DELETE SET NULL` ao excluir comentário |
 
-Não criados de propósito: índices em `sessions.idle_expires_at`/`absolute_expires_at`, `auth_throttle.window_started_at`, `auth_tokens.expires_at` e `notifications.read_at` (só a limpeza diária usa); índices em FKs para `users` (`created_by`, `completed_by`, `actor_id`, `author_id`, `checked_by`, `assigned_by`, `used_by_user_id`), porque usuários nunca são excluídos; índice em `boards.name` (poucos quadros). Reavaliar com `EXPLAIN (ANALYZE, BUFFERS)` se algo ficar lento. O teste `catalog.test.ts` falha se surgir FK (exceto para `users`) sem índice.
+Não criados de propósito: índices em `sessions.idle_expires_at`/`absolute_expires_at`, `auth_throttle.window_started_at`, `auth_tokens.expires_at` e `notifications.read_at` (só a limpeza diária usa); índices em FKs para `users` (`created_by`, `completed_by`, `actor_id`, `author_id`, `checked_by`, `assigned_by`, `used_by_user_id`, `added_by`, `uploaded_by`), porque usuários nunca são excluídos; índice em `boards.name` (poucos quadros); índice em `cards.visibility` (a consulta entra sempre pelo quadro e quase todo card é `team`). Reavaliar com `EXPLAIN (ANALYZE, BUFFERS)` se algo ficar lento. O teste `catalog.test.ts` falha se surgir FK (exceto para `users`) sem índice.
 
 Integridade reforçada no banco (além do mínimo descrito acima): FK composta de I6; `CHECK` de conclusão nos dois sentidos; lista de conclusão nunca arquivada; `due_has_time` exige `due_at`; título sem quebra de linha; item marcado ⇔ autor/data; notificação nunca para o próprio ator (RN18); campos de convite e reset mutuamente exclusivos; trigger append-only na atividade.
 
@@ -619,11 +705,11 @@ Infra: `db/client.ts` (`createPool` com `max` = `DATABASE_POOL_MAX`, `createDb` 
 
 | Evento | Efeito no banco |
 |--------|-----------------|
-| Excluir quadro (Admin) | `DELETE boards` → cascata em listas, cards, etiquetas, checklists, comentários, atividades, notificações. |
-| Excluir card (Admin) | cascata do card (responsáveis, etiquetas, checklists, comentários, atividades, notificações). |
+| Excluir quadro (Admin) | `DELETE boards` → cascata em listas, cards, etiquetas, checklists, comentários, atividades, notificações, **acessos (`card_viewers`) e capas (`card_covers`)**. As imagens dos cards excluídos são apagadas do R2 depois do commit (falha vira log + órfão para a limpeza). |
+| Excluir card (Admin) | cascata do card (responsáveis, acessos, capa, etiquetas, checklists, comentários, atividades, notificações) e exclusão do objeto da capa no R2 após o commit. |
 | Desativar usuário | `status='deactivated'`; apaga sessões; revoga redefinições pendentes. Atribuições permanecem. |
 | Anonimizar (só desativado) | `name='Usuário removido'`, `email=NULL`, `password_hash=NULL`, `anonymized_at=now()`; apaga sessões, tokens alvo, notificações recebidas e o throttle do e-mail; tira o e-mail dos convites ligados a ele. Cards, comentários e atividades permanecem, exibindo "Usuário removido". Irreversível; não pode reativar (LGPD). |
-| Manutenção diária (`plugins/maintenance.ts`, a cada 24h e no boot; ligada por padrão só em produção, api.md §18.4 item 40) | apaga notificações lidas há > 90 dias (RN19), sessões expiradas, `auth_throttle` sem lock e com janela > 1h, `auth_tokens` expirados/usados/revogados há > 30 dias (e criados há > 30 dias). |
+| Manutenção diária (`plugins/maintenance.ts`, a cada 24h e no boot; ligada por padrão só em produção, api.md §18.4 item 40) | apaga notificações lidas há > 90 dias (RN19), sessões expiradas, `auth_throttle` sem lock e com janela > 1h, `auth_tokens` expirados/usados/revogados há > 30 dias (e criados há > 30 dias). **Com R2 configurado**, varre o prefixo `covers/` e apaga objetos sem linha em `card_covers` e com mais de 24 h (uploads iniciados e nunca confirmados, e capas cuja exclusão falhou). Erro de rede no R2 não interrompe as demais limpezas. |
 
 ### 5.3 Atividade (C12)
 
@@ -641,6 +727,9 @@ Infra: `db/client.ts` (`createPool` com `max` = `DATABASE_POOL_MAX`, `createDb` 
 | `card_completed` | `{}` |
 | `card_reopened` | `{}` |
 | `card_archived` / `card_restored` | `{}` |
+| `card_visibility_changed` | `{ from: CardVisibility, to: CardVisibility }` (Fatia 11) |
+| `card_viewer_added` / `card_viewer_removed` | `{ userId }` (Fatia 11) |
+| `card_cover_changed` / `card_cover_removed` | `{}` (Fatia 11) |
 
 Nomes são "fotografados" em `data` para o histórico continuar legível. Nome de usuário é resolvido na leitura (anonimização se reflete).
 
@@ -677,6 +766,7 @@ Somado a `SameSite=Lax` e à ausência de CORS, isso bloqueia formulários e fet
 | `POST /api/me/password` | 10 req / 15 min por usuário | `429 RATE_LIMITED` |
 | Lookup/aceite de convite e reset | 10 req / 15 min por IP (`@fastify/rate-limit`) | `429 RATE_LIMITED` |
 | Setup | 5 req / 15 min por IP (tentativas com código de configuração errado contam) | `429 RATE_LIMITED` |
+| `POST /api/cards/:cardId/cover/upload-url` | 30 req / 5 min por usuário (Fatia 11: cada chamada assina uma escrita no R2) | `429 RATE_LIMITED` |
 | Geral autenticado | 600 req / min por usuário | `429 RATE_LIMITED` |
 
 Atomicidade (`api.md` §18.5, itens 41 e 42): a tentativa é **reservada antes do Argon2** com um upsert que incrementa e devolve o contador (`INSERT ... ON CONFLICT DO UPDATE ... RETURNING`), e a decisão usa o valor devolvido. Proibido o padrão "checa bloqueio → verifica senha → grava falha": uma rajada paralela inteira passa pela checagem antes da primeira falha ser gravada. Ordem: e-mail, depois IP. Sucesso apaga o e-mail e devolve a reserva do IP; senha certa na troca de senha devolve a reserva do e-mail.
@@ -691,11 +781,23 @@ Nota: o escopo cita "5 tentativas para o mesmo e-mail ou IP". Para IP usamos 20 
 - Rebaixar um Admin para Member, desativar ou anonimizar revoga, na mesma transação, os convites e resets **pendentes criados por ele** (`created_by`): um Admin removido não deixa links válidos para trás (`api.md` §18.5 item 43).
 
 ### 6.6 Autorização
-- Todos os usuários ativos leem e editam todos os quadros (decisão 1 do cliente).
+- Todos os usuários ativos leem e editam todos os quadros (decisão 1 do cliente) e todo card com `visibility = 'team'`.
+- **Card `restricted` (Fatia 11, I13, ADR 0015):** acesso = Admin **ou** linha em `card_viewers`. Sem acesso: leitura do card → `403 CARD_RESTRICTED`; nas listagens, `LockedCard` com título, id, lista e posição, e nada mais.
 - Somente Admin: rotas `/api/admin/*`, `DELETE /api/boards/:id`, `DELETE /api/cards/:id`, excluir comentário de terceiros.
 - Autor: editar comentário (só o autor, nem Admin edita), excluir comentário (autor ou Admin).
-- Sem IDOR relevante porque tudo é compartilhado, **exceto** notificações (filtradas por `user_id = request.user.id`; notificação de outro → 404) e e-mails de colegas (só Admin vê).
+- Sem IDOR relevante porque tudo é compartilhado, **exceto** notificações (filtradas por `user_id = request.user.id`; notificação de outro → 404), e-mails de colegas (só Admin vê) e cards restritos (filtro/bloqueio acima).
 - Checagem sempre no servidor; a UI apenas esconde botões.
+
+**Onde mora a checagem de card** (para não repetir a regra por rota):
+
+| Camada | Função | Usada por |
+|--------|--------|-----------|
+| Regra pura | `canAccessCard({ visibility, viewerIds }, actor)` (`modules/cards/access.ts`, espelhada no shared para o front) | UI (esconder ações), testes |
+| Mutação | `assertCardAccess` chamado **dentro** de `lockCard()` | cards, checklists, comentários, etiquetas, responsáveis, capa, visibilidade |
+| Leitura de um card | `assertCardAccess` | `GET /api/cards/:cardId`, `/activity` |
+| Listagens | `cardAccessCondition(actor)` (predicado SQL) | payload do quadro, arquivados, `GET /api/me/cards`, notificações |
+
+A ordem das checagens continua a de `api.md` §3: 404 (card) → `403 CARD_RESTRICTED` → `403 FORBIDDEN` (papel) → 409 (estado). A checagem roda sobre a linha já bloqueada (`FOR UPDATE`), então restringir o card em paralelo não deixa passar mutação.
 
 ### 6.7 Headers e demais proteções
 - API (`plugins/security-headers.ts`): `@fastify/helmet` com defaults, exceto a CSP, que é restrita porque a API só responde JSON: `default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`. A Swagger UI (`/api/docs`, só fora de produção) usa a CSP própria do pacote (`staticCSP`). `Cache-Control: no-store` em todas as respostas do processo da API (que só atende `/api/*`), inclusive erros e 404.
@@ -710,6 +812,24 @@ Nota: o escopo cita "5 tentativas para o mesmo e-mail ou IP". Para IP usamos 20 
 - **Setup inicial protegido por código:** com `NODE_ENV=production`, `SETUP_TOKEN` é obrigatório (erro em `SETUP_TOKEN` na inicialização). `POST /api/setup` sem o código certo responde `403 SETUP_TOKEN_INVALID` antes de consultar o banco ou gerar hash (comparação SHA-256 + `timingSafeEqual`), e `GET /api/setup/status` informa `requiresSetupToken` para a tela pedir o código (`api.md` §4 e §18.6). Sem isso, quem abrisse a instância vazia primeiro viraria Admin.
 - O **Dockerfile de produção deve definir `ENV NODE_ENV=production`** (não depender só do compose ou do `.env` do servidor).
 - **`TRUST_PROXY` deve ser restrito ao proxy.** A variável aceita `true`/`false`, número de saltos ou lista de IPs/CIDRs (`config/env.ts` valida; `fastifyTrustProxy` em `app.ts` repassa ao `trustProxy` do Fastify). Lista vai direto ao `proxy-addr`; número de saltos vira a função `(endereço, salto) => salto < n`, porque o Fastify 5 trata `trustProxy` numérico como "não confiar em nada". Com `true`, qualquer cliente que alcance a porta da API forja `X-Forwarded-For` e anula o bloqueio por IP e os limites de rota. Na VPS: IP/sub-rede do Caddy, e a API só escuta na rede interna do compose. Em plataforma cujo proxy não tem IP fixo (Render), use número de saltos e leia a limitação em `docs/ops/deploy-render.md`.
+
+### 6.9 Armazenamento de capas no Cloudflare R2 (Fatia 11) — ver ADR 0016
+
+**Configuração.** As quatro variáveis do R2 (§3) são tudo ou nada; `config/env.ts` recusa subir com parte delas (mesmo espírito fail-closed de §6.8). Sem elas, `app.coverStorage` é `null`, `features.cardCovers` é `false` e as rotas de capa respondem `503 COVER_STORAGE_UNAVAILABLE`. O segredo entra no `redact` do logger, e a URL assinada nunca é logada (a assinatura é credencial temporária).
+
+**Cliente próprio, sem SDK** (`src/lib/r2.ts`, só `node:crypto` e `fetch`): assinatura SigV4 por query string para `PUT`, `GET`, `HEAD`, `DELETE` e `ListObjectsV2`. Motivo: o Render Free hiberna e acorda o tempo todo; o SDK da AWS acrescentaria megabytes ao bundle do `tsup` e tempo de boot para cinco operações. Toda chamada de rede ao R2 tem timeout de 5 s e falha vira `503`, nunca 500.
+
+**Escrita.** `POST /api/cards/:cardId/cover/upload-url` valida acesso ao card, quadro não arquivado, tipo e tamanho, gera a chave `covers/<cardId>/<32 base64url>` (24 bytes de `crypto.randomBytes`) e assina um `PUT` de 5 minutos com `content-type` e `content-length` nos headers assinados. O navegador envia direto ao R2 (sem cookie, sem CSRF: é outra origem). A confirmação (`PUT /api/cards/:cardId/cover`) refaz a checagem com `HEAD` (tamanho e tipo gravados) e um `GET` com `Range: bytes=0-15` para conferir a assinatura do formato (JPEG `FF D8 FF`, PNG `89 50 4E 47 0D 0A 1A 0A`, WebP `RIFF....WEBP`, AVIF `....ftypavif|ftypavis`). Objeto reprovado é apagado → `409 COVER_UPLOAD_INVALID`.
+
+**Leitura.** URL assinada por objeto, montada na resposta do payload do quadro e do detalhe; assinar é HMAC local, sem ida à rede. O vencimento é arredondado para o início da janela de 5 minutos e vale 15 minutos a partir dali: a mesma string sai por 5 minutos, o polling de 30 s não invalida o cache do navegador e a imagem não pisca. A URL carrega `response-cache-control: private, max-age=600`. Um cache em memória (`Map` de até 500 entradas, chave `objectKey|janela`) evita reassinar o mesmo objeto dentro da janela. Card bloqueado (§4.4) não gera URL nenhuma.
+
+**Requisitos fora do código** (tarefa de infra, Fatia 11):
+- bucket **privado** (sem `r2.dev` público, sem domínio público), token de API com permissão só nesse bucket (leitura e escrita de objetos);
+- regra de **CORS** no bucket permitindo `PUT` a partir do `APP_ORIGIN` (`AllowedHeaders: content-type`, `MaxAge` curto). Sem isso o upload falha no navegador;
+- **CSP do front** (ronin-web) com o host do R2 em `img-src` — a imagem vem de outra origem;
+- o bucket **não entra no backup** do Postgres: perder o R2 significa cards sem capa, não perda de dados de trabalho. Documentar isso no guia de operação.
+
+**Riscos aceitos:** uma URL assinada compartilhada dá acesso à imagem por até 15 minutos (inclusive de card restrito); a validação de conteúdo é por tipo declarado + magic bytes, não por decodificação da imagem.
 
 ## 7. Atualização entre usuários (ADR 0006)
 
@@ -729,6 +849,7 @@ Regras:
 - Formulários do detalhe mantêm estado local; dados do polling só sobrescrevem campos **não sujos** (evita apagar o que o usuário digita).
 - Movimento: update otimista no cache (`position` temporária gerada com `generateKeyBetween` no cliente só para ordenar), rollback no `onError` com toast "Não foi possível mover o card", e `invalidateQueries(['board', id])` no `onSettled`.
 - Last write wins (RN10); sem ETag no MVP.
+- Capa (Fatia 11): a URL assinada só muda a cada 5 minutos (§6.9), então o refetch de 30 s não recarrega a imagem. O front não precisa tratar vencimento: a próxima atualização do quadro ou do card já traz uma URL válida.
 
 ## 8. Tratamento de erros
 
@@ -760,6 +881,8 @@ Envelope único (schema `errorResponseSchema` no shared):
 - DnD: `@dnd-kit` com `PointerSensor` (ativação por distância 5px) e `KeyboardSensor`; no toque, DnD não é garantido. "Mover para…" em menu do card: seleciona quadro, lista e posição (1..n+1), converte em `placement`.
 - Concluir/reabrir: após `complete`/`move`/`reopen` com `completionChange` não nulo, anunciar via `aria-live="polite"` ("Card concluído" / "Card reaberto").
 - Responsivo básico: listas em rolagem horizontal com snap no mobile; detalhe do card em tela cheia abaixo de 640px.
+- **Card bloqueado (Fatia 11):** a face mostra só o título e um cadeado com rótulo textual ("Card restrito", RN17), sem menu, sem link e sem arrastar (`aria-disabled`), e o filtro do quadro só o alcança pelo texto do título (ele não tem etiqueta, responsável, prioridade nem prazo). Abrir pela URL `/b/:id/c/:cardId` mostra o estado "Você não tem acesso a este card" (403 `CARD_RESTRICTED`). Card restrito **com** acesso mostra o cadeado junto com o resto, e o detalhe traz a lista de pessoas com acesso.
+- **Capa (Fatia 11):** a imagem entra no topo da face (proporção fixa, `loading="lazy"`, `alt=""` porque é decorativa) e no topo do detalhe. Antes de enviar, o front reduz para no máximo 1600 px no maior lado (canvas) e mantém o tipo aceito; o fluxo é pedir a URL → `PUT` no R2 (com barra de progresso) → confirmar na API, com mensagem clara em cada falha. Sem `features.cardCovers`, o botão "Adicionar capa" não aparece.
 
 ## 10. Observabilidade e operação
 
@@ -777,7 +900,8 @@ Envelope único (schema `errorResponseSchema` no shared):
 | Camada | Ferramenta | O que cobre | Onde |
 |--------|-----------|-------------|------|
 | Domínio puro | Vitest | `getDueState` (limites 24h, sem hora, concluído), `nextPaletteColor`, ranking de prioridade, schemas Zod (normalização de e-mail, limites) | `packages/shared/src/**/*.test.ts` |
-| API integração (principal) | Vitest + `app.inject()` + Postgres real (`kanban_test`) | Toda rota: sucesso, validação, 401, 403, CSRF, conflitos. Matriz de conclusão/reabertura (ADR 0010). Ordenação concorrente. Revogação de sessões. | `src/modules/**/*.test.ts` |
+| API integração (principal) | Vitest + `app.inject()` + Postgres real (`kanban_test`) | Toda rota: sucesso, validação, 401, 403, CSRF, conflitos. Matriz de conclusão/reabertura (ADR 0010). Matriz de acesso ao card restrito: ator (admin/member) × visibilidade × viewer × rota, mais o teste de vazamento do `LockedCard` (ADR 0015). Ordenação concorrente. Revogação de sessões. | `src/modules/**/*.test.ts` |
+| Capa (R2) | Vitest + R2 falso (rota `fetch` interceptada) | Assinatura SigV4 contra vetor conhecido; confirmação com objeto ausente/grande/tipo errado/magic bytes errados; troca e remoção; janela de URL estável; R2 fora do ar → `503`; limpeza de órfãos (ADR 0016) | `src/lib/r2.test.ts`, `src/modules/cards/cover.test.ts` |
 | Front componentes | Vitest + Testing Library + MSW | Face do card (estados de prazo com texto), filtro, rollback do movimento otimista, formulários com erros de validação, "Mover para…" por teclado | `src/**/*.test.tsx` (ronin-web) |
 | E2E | Playwright (Chromium no CI; Firefox/WebKit localmente antes do release) | Fluxos críticos (lista em `plan.md` Fatia 10) | `e2e/` (ronin-web) |
 | Acessibilidade | `@axe-core/playwright` | zero violações "serious/critical" nas telas principais nos dois temas | E2E |
@@ -808,7 +932,9 @@ CI (`.github/workflows/ci.yml`): job único em `ubuntu-latest` com serviço `pos
 | Dados mínimos, sem terceiros | 2, 6.7 (CSP `'self'`), fontes self-hosted |
 | Anonimização de conta (LGPD) | 5.2 |
 | Logs sem conteúdo | 6.7 |
-| Quadro 500 cards ≤ 2 s | payload único do quadro com 5 consultas indexadas (api.md §9); sem N+1; gzip no Caddy |
+| Quadro 500 cards ≤ 2 s | payload único do quadro com 6 consultas indexadas (api.md §9); sem N+1; gzip no Caddy. Com a Fatia 11, acesso vira `EXISTS` na mesma consulta, capa vira `LEFT JOIN` e a URL assinada é HMAC local: o número de consultas e de idas à rede não muda |
+| Card restrito não vaza | tipo próprio no contrato (`LockedCard`) + predicado de acesso nas consultas de agregados/etiquetas/responsáveis + serializer do Fastify (6.6, ADR 0015) |
+| Imagem de card restrito não vaza | bucket privado, chave inadivinhável e URL assinada com validade de 10 a 15 min, gerada só para quem tem acesso (6.9, ADR 0016) |
 | Mover otimista ≤ 500 ms | 7; lock só das listas envolvidas |
 | Meus cards ≤ 1 s | uma consulta por `card_assignees(user_id)` + índices; ordenação por prazo e prioridade no SQL |
 | Atualização sem tempo real | 7 |
