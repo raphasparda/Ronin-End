@@ -15,7 +15,10 @@ import type { BoardRow, ListRow } from '../../db/schema';
 import { AppError } from '../../lib/app-error';
 import { toIso, toIsoOrNull } from '../../lib/dates';
 import { FORBIDDEN_MESSAGE } from '../../plugins/session';
+import type { R2Client } from '../../lib/r2';
 import type { CardActor } from '../cards/access';
+import { deleteCoverObject, type CoverReadContext } from '../cards/cover';
+import { findBoardCoverKeys } from '../cards/repository';
 import { loadArchivedCards, loadBoardCards } from '../cards/service';
 import { loadBoardLabels } from '../labels/service';
 import { findActiveLists, findArchivedLists, insertLists } from '../lists/repository';
@@ -131,12 +134,13 @@ export async function getBoardPayload(
   db: Database,
   boardId: string,
   actor: CardActor,
+  covers: CoverReadContext,
 ): Promise<BoardPayload> {
   return db.transaction(
     async (tx) => {
       const board = await getBoardOrThrow(tx, boardId);
       const lists = await findActiveLists(tx, boardId);
-      const cards = await loadBoardCards(tx, boardId, actor);
+      const cards = await loadBoardCards(tx, boardId, actor, covers);
       const labels = await loadBoardLabels(tx, boardId);
       return { board: toBoard(board), lists: lists.map(toList), cards, labels };
     },
@@ -185,15 +189,21 @@ export async function deleteBoard(
   actor: { role: Role },
   boardId: string,
   confirmName: string,
+  storage: R2Client | null = null,
+  log?: { warn: (obj: object, msg: string) => void },
 ): Promise<void> {
-  await db.transaction(async (tx) => {
+  const objectKeys = await db.transaction(async (tx) => {
     const board = await lockBoard(tx, boardId);
     if (actor.role !== 'admin') throw new AppError('FORBIDDEN', FORBIDDEN_MESSAGE);
     if (board.name !== confirmName) {
       throw new AppError('CONFIRMATION_MISMATCH', CONFIRMATION_MISMATCH_MESSAGE);
     }
+    const keys = await findBoardCoverKeys(tx, boardId);
     await deleteBoardById(tx, boardId);
+    return keys;
   });
+  // Cascata no banco já levou as linhas; os objetos saem depois do commit (falha vira órfão).
+  for (const objectKey of objectKeys) await deleteCoverObject(storage, objectKey, log);
 }
 
 /** `GET /api/boards/:boardId/archived`. */
@@ -201,12 +211,13 @@ export async function getBoardArchived(
   db: Database,
   boardId: string,
   actor: CardActor,
+  covers: CoverReadContext,
 ): Promise<BoardArchivedResponse> {
   return db.transaction(
     async (tx) => {
       await getBoardOrThrow(tx, boardId);
       const lists = await findArchivedLists(tx, boardId);
-      const cards = await loadArchivedCards(tx, boardId, actor);
+      const cards = await loadArchivedCards(tx, boardId, actor, covers);
       return { lists: lists.map(toList), cards };
     },
     { isolationLevel: 'repeatable read', accessMode: 'read only' },

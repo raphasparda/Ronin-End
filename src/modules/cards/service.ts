@@ -22,6 +22,7 @@ import {
 import type { Database, DbExecutor } from '../../db/client';
 import type { BoardRow, CardRow, ListRow } from '../../db/schema';
 import { AppError } from '../../lib/app-error';
+import type { R2Client } from '../../lib/r2';
 import { toIso, toIsoOrNull } from '../../lib/dates';
 import { CARD_SIBLINGS, computePosition } from '../../lib/ordering';
 import { dueInputToUtc } from '../../lib/time';
@@ -36,6 +37,7 @@ import { USER_NOT_FOUND_MESSAGE } from '../users/service';
 import { getWorkspace } from '../workspace/service';
 
 import { assertCardAccess, cardRestricted, type CardActor } from './access';
+import { coverReadContext, deleteCoverObject, toCardCover, type CoverReadContext } from './cover';
 import {
   deleteCardAssignee,
   deleteCardById,
@@ -44,6 +46,7 @@ import {
   findCardAssigneePairs,
   findCardById,
   findCardChecklists,
+  findCardCover,
   findCardComments,
   findCardLabelPairs,
   findCardSummaryRows,
@@ -84,6 +87,8 @@ export function viewerIsAssigneeMessage(name: string): string {
 export interface CardActionContext {
   actor: CardActor;
   now: Date;
+  /** Bucket das capas (ou `null`): as respostas trazem a URL assinada da capa (ADR 0016). */
+  coverStorage: R2Client | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -105,6 +110,7 @@ function toCardSummary(
   row: CardSummaryRow,
   labelIds: Map<string, string[]>,
   assigneeIds: Map<string, string[]>,
+  covers: CoverReadContext,
 ): CardSummary {
   return {
     locked: false,
@@ -124,8 +130,10 @@ function toCardSummary(
     checklist: { done: row.checklistDone, total: row.checklistTotal },
     commentCount: row.commentCount,
     hasDescription: row.hasDescription,
-    // A capa entra na tarefa 11.6 (sem R2 configurado continua `null`, ADR 0016).
-    cover: null,
+    cover: toCardCover(
+      { objectKey: row.coverObjectKey, width: row.coverWidth, height: row.coverHeight },
+      covers,
+    ),
     archivedAt: toIsoOrNull(row.archivedAt),
   };
 }
@@ -145,6 +153,7 @@ async function loadSummaries(
   db: DbExecutor,
   scope: CardSummaryScope,
   actor: CardActor,
+  covers: CoverReadContext,
 ): Promise<{ row: CardSummaryRow; card: CardSummary | null }[]> {
   const rows = await findCardSummaryRows(db, scope, actor);
   if (rows.length === 0) return [];
@@ -163,7 +172,7 @@ async function loadSummaries(
   );
   return rows.map((row) => ({
     row,
-    card: row.accessible ? toCardSummary(row, labelIds, assigneeIds) : null,
+    card: row.accessible ? toCardSummary(row, labelIds, assigneeIds, covers) : null,
   }));
 }
 
@@ -175,9 +184,10 @@ export async function loadBoardCards(
   db: DbExecutor,
   boardId: string,
   actor: CardActor,
+  covers: CoverReadContext,
 ): Promise<BoardCard[]> {
-  return (await loadSummaries(db, { boardId, state: 'active' }, actor)).map(({ row, card }) =>
-    card === null ? toLockedCard(row) : card,
+  return (await loadSummaries(db, { boardId, state: 'active' }, actor, covers)).map(
+    ({ row, card }) => (card === null ? toLockedCard(row) : card),
   );
 }
 
@@ -189,11 +199,13 @@ export async function loadArchivedCards(
   db: DbExecutor,
   boardId: string,
   actor: CardActor,
+  covers: CoverReadContext,
 ): Promise<BoardArchivedCard[]> {
-  return (await loadSummaries(db, { boardId, state: 'archived' }, actor)).map(({ row, card }) =>
-    card === null
-      ? toLockedCard(row)
-      : { ...card, listName: row.listName, listArchived: row.listArchived },
+  return (await loadSummaries(db, { boardId, state: 'archived' }, actor, covers)).map(
+    ({ row, card }) =>
+      card === null
+        ? toLockedCard(row)
+        : { ...card, listName: row.listName, listArchived: row.listArchived },
   );
 }
 
@@ -202,11 +214,15 @@ export async function loadArchivedCards(
  * atribuídos ao usuário. Ordem: `dueAt ASC NULLS LAST`, prioridade (Urgente → sem), `createdAt`.
  * Três consultas (faces, etiquetas, responsáveis) num snapshot único.
  */
-export async function getMyCards(db: Database, actor: CardActor): Promise<MyCard[]> {
+export async function getMyCards(
+  db: Database,
+  actor: CardActor,
+  covers: CoverReadContext,
+): Promise<MyCard[]> {
   return db.transaction(
     async (tx) =>
       // A consulta já omite o que o ator não pode abrir (RN32 e api.md §18.7 item 49).
-      (await loadSummaries(tx, { assigneeId: actor.id }, actor)).flatMap(({ row, card }) =>
+      (await loadSummaries(tx, { assigneeId: actor.id }, actor, covers)).flatMap(({ row, card }) =>
         card === null
           ? []
           : [
@@ -227,22 +243,24 @@ export async function loadCardSummary(
   db: DbExecutor,
   cardId: string,
   actor: CardActor,
+  covers: CoverReadContext,
 ): Promise<CardSummary> {
-  const [found] = await loadSummaries(db, { cardId }, actor);
+  const [found] = await loadSummaries(db, { cardId }, actor, covers);
   if (!found) throw notFound();
   if (found.card === null) throw cardRestricted();
   return found.card;
 }
 
-async function loadCardDetail(
+export async function loadCardDetail(
   db: DbExecutor,
   cardId: string,
   actor: CardActor,
+  covers: CoverReadContext,
 ): Promise<CardDetail> {
   const card = await findCardById(db, cardId);
   if (!card) throw notFound();
   await assertCardAccess(db, card, actor);
-  const summary = await loadCardSummary(db, cardId, actor);
+  const summary = await loadCardSummary(db, cardId, actor, covers);
   const board = await findBoardById(db, card.boardId);
   const list = await findListById(db, card.listId);
   if (!board || !list) throw notFound();
@@ -306,8 +324,9 @@ export async function getCardDetail(
   db: Database,
   cardId: string,
   actor: CardActor,
+  covers: CoverReadContext,
 ): Promise<CardDetail> {
-  return db.transaction((tx) => loadCardDetail(tx, cardId, actor), {
+  return db.transaction((tx) => loadCardDetail(tx, cardId, actor, covers), {
     isolationLevel: 'repeatable read',
     accessMode: 'read only',
   });
@@ -470,7 +489,7 @@ export async function createCard(
       type: 'card_created',
       data: { listId: list.id, listName: list.name },
     });
-    return loadCardSummary(tx, card.id, ctx.actor);
+    return loadCardSummary(tx, card.id, ctx.actor, coverReadContext(ctx));
   });
 }
 
@@ -538,7 +557,7 @@ export async function updateCard(
     if (Object.keys(changes).length > 0) {
       await updateCardById(tx, card.id, { ...changes, updatedAt: ctx.now });
     }
-    return loadCardDetail(tx, card.id, ctx.actor);
+    return loadCardDetail(tx, card.id, ctx.actor, coverReadContext(ctx));
   });
 }
 
@@ -623,7 +642,7 @@ export async function moveCard(
     }
 
     return {
-      card: await loadCardSummary(tx, card.id, ctx.actor),
+      card: await loadCardSummary(tx, card.id, ctx.actor, coverReadContext(ctx)),
       completionChange,
       removedLabelIds,
     };
@@ -684,7 +703,7 @@ export async function changeCardCompletion(
     const expected = change === 'completed' ? 'open' : 'completed';
     if (card.status !== expected) {
       return {
-        card: await loadCardSummary(tx, card.id, ctx.actor),
+        card: await loadCardSummary(tx, card.id, ctx.actor, coverReadContext(ctx)),
         completionChange: null,
         removedLabelIds: [],
       };
@@ -736,7 +755,7 @@ export async function changeCardCompletion(
       now: ctx.now,
     });
     return {
-      card: await loadCardSummary(tx, card.id, ctx.actor),
+      card: await loadCardSummary(tx, card.id, ctx.actor, coverReadContext(ctx)),
       completionChange: change,
       removedLabelIds: [],
     };
@@ -763,7 +782,7 @@ export async function archiveCard(
         data: {},
       });
     }
-    return loadCardSummary(tx, card.id, ctx.actor);
+    return loadCardSummary(tx, card.id, ctx.actor, coverReadContext(ctx));
   });
 }
 
@@ -784,7 +803,8 @@ export async function restoreCard(
       lockLists: true,
     });
     assertBoardWritable(boards.get(card.boardId));
-    if (card.archivedAt === null) return loadCardSummary(tx, card.id, ctx.actor);
+    if (card.archivedAt === null)
+      return loadCardSummary(tx, card.id, ctx.actor, coverReadContext(ctx));
     const list = lists.get(card.listId);
     if (!list) throw notFound();
     if (list.archivedAt !== null) throw listArchived();
@@ -812,7 +832,7 @@ export async function restoreCard(
         now: ctx.now,
       });
     }
-    return loadCardSummary(tx, card.id, ctx.actor);
+    return loadCardSummary(tx, card.id, ctx.actor, coverReadContext(ctx));
   });
 }
 
@@ -820,13 +840,23 @@ export async function restoreCard(
  * `DELETE /api/cards/:cardId` (Admin): exclusão definitiva em cascata.
  * Ordem: 404 → 403 (papel) → `409 BOARD_ARCHIVED` (quadro arquivado é somente leitura, I10).
  */
-export async function deleteCard(db: Database, actor: CardActor, cardId: string): Promise<void> {
-  await cardTransaction(db, async (tx) => {
+export async function deleteCard(
+  db: Database,
+  actor: CardActor,
+  cardId: string,
+  storage: R2Client | null = null,
+  log?: { warn: (obj: object, msg: string) => void },
+): Promise<void> {
+  const objectKey = await cardTransaction(db, async (tx) => {
     const { card, boards } = await lockCard(tx, cardId, { actor, lockLists: false });
     if (actor.role !== 'admin') throw new AppError('FORBIDDEN', FORBIDDEN_MESSAGE);
     assertBoardWritable(boards.get(card.boardId));
+    const cover = await findCardCover(tx, card.id);
     await deleteCardById(tx, card.id);
+    return cover?.objectKey ?? null;
   });
+  // Depois do commit: falha no R2 não desfaz a exclusão (o objeto vira órfão, ADR 0016 item 4).
+  if (objectKey) await deleteCoverObject(storage, objectKey, log);
 }
 
 // ---------------------------------------------------------------------------
@@ -937,7 +967,8 @@ export async function setCardVisibility(
   return cardTransaction(db, async (tx) => {
     const { card, boards } = await lockCard(tx, cardId, { actor: ctx.actor, lockLists: false });
     assertBoardWritable(boards.get(card.boardId));
-    if (card.visibility === visibility) return loadCardDetail(tx, card.id, ctx.actor);
+    if (card.visibility === visibility)
+      return loadCardDetail(tx, card.id, ctx.actor, coverReadContext(ctx));
 
     const base = { cardId: card.id, boardId: card.boardId, actorId: ctx.actor.id, now: ctx.now };
     await updateCardById(tx, card.id, { visibility, updatedAt: ctx.now });
@@ -963,7 +994,7 @@ export async function setCardVisibility(
     } else {
       await deleteCardViewers(tx, card.id);
     }
-    return loadCardDetail(tx, card.id, ctx.actor);
+    return loadCardDetail(tx, card.id, ctx.actor, coverReadContext(ctx));
   });
 }
 

@@ -72,7 +72,11 @@ export const boardRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
         response: { 200: boardPayloadSchema, ...errorResponses(400, 401, 404) },
       },
     },
-    (request) => getBoardPayload(app.db, request.params.boardId, requireUser(request)),
+    (request) =>
+      getBoardPayload(app.db, request.params.boardId, requireUser(request), {
+        storage: app.coverStorage,
+        now: app.clock(),
+      }),
   );
 
   app.patch(
@@ -138,6 +142,8 @@ export const boardRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
         requireUser(request),
         request.params.boardId,
         request.body.confirmName,
+        app.coverStorage,
+        request.log,
       );
       return reply.status(204).send(null);
     },
@@ -153,7 +159,11 @@ export const boardRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
         response: { 200: boardArchivedResponseSchema, ...errorResponses(400, 401, 404) },
       },
     },
-    (request) => getBoardArchived(app.db, request.params.boardId, requireUser(request)),
+    (request) =>
+      getBoardArchived(app.db, request.params.boardId, requireUser(request), {
+        storage: app.coverStorage,
+        now: app.clock(),
+      }),
   );
 
   done();

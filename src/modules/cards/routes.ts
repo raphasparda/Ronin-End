@@ -2,12 +2,15 @@ import {
   activitiesResponseSchema,
   cardAssigneeParamsSchema,
   cardAssigneesResponseSchema,
+  cardCoverUploadUrlRequestSchema,
+  cardCoverUploadUrlResponseSchema,
   cardDetailResponseSchema,
   cardIdParamsSchema,
   cardMutationResultSchema,
   cardSummaryResponseSchema,
   cardViewerParamsSchema,
   cardViewersResponseSchema,
+  confirmCardCoverRequestSchema,
   createCardRequestSchema,
   listIdParamsSchema,
   moveCardRequestSchema,
@@ -19,7 +22,10 @@ import type { FastifyPluginCallbackZod } from 'fastify-type-provider-zod';
 
 import type { App } from '../../app';
 import { errorResponses, noContentSchema } from '../../lib/route-schemas';
+import { coverUploadUrlRateLimit } from '../../plugins/rate-limit';
 import { requireUser } from '../../plugins/session';
+
+import { confirmCardCover, createCoverUploadUrl, removeCardCover } from './cover';
 
 import {
   addCardViewer,
@@ -39,8 +45,11 @@ import {
   type CardActionContext,
 } from './service';
 
-function actionContext(app: Pick<App, 'clock'>, request: FastifyRequest): CardActionContext {
-  return { actor: requireUser(request), now: app.clock() };
+function actionContext(
+  app: Pick<App, 'clock' | 'coverStorage'>,
+  request: FastifyRequest,
+): CardActionContext {
+  return { actor: requireUser(request), now: app.clock(), coverStorage: app.coverStorage };
 }
 
 /** Rotas de cards e atividade (api.md §11). Todas Auth, exceto `DELETE` (Admin). */
@@ -78,7 +87,10 @@ export const cardRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
       },
     },
     async (request) => ({
-      card: await getCardDetail(app.db, request.params.cardId, requireUser(request)),
+      card: await getCardDetail(app.db, request.params.cardId, requireUser(request), {
+        storage: app.coverStorage,
+        now: app.clock(),
+      }),
     }),
   );
 
@@ -187,7 +199,13 @@ export const cardRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
       },
     },
     async (request, reply) => {
-      await deleteCard(app.db, requireUser(request), request.params.cardId);
+      await deleteCard(
+        app.db,
+        requireUser(request),
+        request.params.cardId,
+        app.coverStorage,
+        request.log,
+      );
       return reply.status(204).send(null);
     },
   );
@@ -307,6 +325,73 @@ export const cardRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
         request.params.cardId,
         request.params.userId,
       ),
+    }),
+  );
+
+  app.post(
+    '/api/cards/:cardId/cover/upload-url',
+    {
+      config: { rateLimit: coverUploadUrlRateLimit() },
+      schema: {
+        tags: ['cards'],
+        summary: 'URL assinada para enviar a capa direto ao R2 (5 min; não grava nada)',
+        params: cardIdParamsSchema,
+        body: cardCoverUploadUrlRequestSchema,
+        response: {
+          200: cardCoverUploadUrlResponseSchema,
+          ...errorResponses(400, 401, 403, 404, 409, 429, 503),
+        },
+      },
+    },
+    (request) =>
+      createCoverUploadUrl(
+        app.db,
+        actionContext(app, request),
+        request.params.cardId,
+        request.body,
+      ),
+  );
+
+  app.put(
+    '/api/cards/:cardId/cover',
+    {
+      schema: {
+        tags: ['cards'],
+        summary: 'Confirma a capa enviada (confere tipo, tamanho e assinatura do formato)',
+        params: cardIdParamsSchema,
+        body: confirmCardCoverRequestSchema,
+        response: {
+          200: cardDetailResponseSchema,
+          ...errorResponses(400, 401, 403, 404, 409, 503),
+        },
+      },
+    },
+    async (request) => ({
+      card: await confirmCardCover(
+        app.db,
+        actionContext(app, request),
+        request.params.cardId,
+        request.body,
+        request.log,
+      ),
+    }),
+  );
+
+  app.delete(
+    '/api/cards/:cardId/cover',
+    {
+      schema: {
+        tags: ['cards'],
+        summary: 'Remove a capa (objeto e linha; idempotente)',
+        params: cardIdParamsSchema,
+        response: {
+          200: cardDetailResponseSchema,
+          ...errorResponses(400, 401, 403, 404, 409, 503),
+        },
+      },
+    },
+    async (request) => ({
+      card: await removeCardCover(app.db, actionContext(app, request), request.params.cardId),
     }),
   );
 

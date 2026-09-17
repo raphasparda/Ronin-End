@@ -4,6 +4,9 @@ import type { FastifyInstance } from 'fastify';
 
 import type { DbExecutor } from '../db/client';
 import { authThrottle, authTokens, sessions } from '../db/schema';
+import type { R2Client } from '../lib/r2';
+import { cleanupOrphanCovers } from '../modules/cards/cover';
+import { findExistingCoverKeys } from '../modules/cards/repository';
 import { deleteReadNotificationsBefore } from '../modules/notifications/repository';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -21,6 +24,8 @@ export interface MaintenanceResult {
   sessions: number;
   throttle: number;
   authTokens: number;
+  /** Objetos de capa órfãos apagados do R2 (0 sem R2 configurado). */
+  coverObjects: number;
 }
 
 /**
@@ -31,7 +36,14 @@ export interface MaintenanceResult {
  * - `auth_tokens` que já não estão pendentes (expirados, usados ou revogados) há mais de 30 dias
  *   **e** criados há mais de 30 dias (continuam no histórico de convites até lá, api.md §8).
  */
-export async function runMaintenance(db: DbExecutor, now: Date): Promise<MaintenanceResult> {
+export async function runMaintenance(
+  db: DbExecutor,
+  now: Date,
+  options: {
+    coverStorage?: R2Client | null;
+    log?: { warn: (obj: object, msg: string) => void };
+  } = {},
+): Promise<MaintenanceResult> {
   const notificationCutoff = new Date(now.getTime() - READ_NOTIFICATION_RETENTION_DAYS * DAY_MS);
   const notificationsDeleted = await deleteReadNotificationsBefore(db, notificationCutoff);
 
@@ -66,11 +78,29 @@ export async function runMaintenance(db: DbExecutor, now: Date): Promise<Mainten
     )
     .returning({ id: authTokens.id });
 
+  // Com R2 configurado: objetos sem linha em `card_covers` e com mais de 24 h (ADR 0016, item 4).
+  let coverObjects = 0;
+  if (options.coverStorage) {
+    try {
+      coverObjects = await cleanupOrphanCovers(
+        db,
+        options.coverStorage,
+        now,
+        findExistingCoverKeys,
+        options.log,
+      );
+    } catch (err) {
+      // Erro de rede no R2 não interrompe as demais limpezas.
+      options.log?.warn({ err }, 'falha ao varrer capas órfãs no R2');
+    }
+  }
+
   return {
     notifications: notificationsDeleted,
     sessions: sessionRows.length,
     throttle: throttleRows.length,
     authTokens: tokenRows.length,
+    coverObjects,
   };
 }
 
@@ -86,7 +116,10 @@ export function registerMaintenance(app: FastifyInstance): void {
   const run = (): Promise<void> => {
     current ??= (async () => {
       try {
-        const result = await runMaintenance(app.db, app.clock());
+        const result = await runMaintenance(app.db, app.clock(), {
+          coverStorage: app.coverStorage,
+          log: app.log,
+        });
         app.log.info({ maintenance: result }, 'manutenção concluída');
       } catch (err) {
         app.log.error({ err }, 'falha na manutenção');

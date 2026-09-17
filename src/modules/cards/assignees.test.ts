@@ -13,7 +13,7 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { expectError, MISSING_ID, seedActor, seedTeam, type Actor } from '../../../test/actors';
-import { cardActor, unlockedCard } from '../../../test/cards';
+import { cardActor, noCovers, unlockedCard } from '../../../test/cards';
 import { csrfHeaders } from '../../../test/app';
 import { createDbTestApp, createTestClock } from '../../../test/auth';
 import { describeDb, useTestDatabase } from '../../../test/db';
@@ -264,7 +264,7 @@ describeDb('responsáveis e prioridade do card (kanban_test)', () => {
       const updated = cardDetailResponseSchema.parse(res.json()).card;
       expect(updated).toMatchObject({ priority: 'urgent', position: second.position });
 
-      const payload = await getBoardPayload(db(), board.id, cardActor(member));
+      const payload = await getBoardPayload(db(), board.id, cardActor(member), noCovers());
       expect(payload.cards.map((c) => c.id)).toEqual([first.id, second.id]);
       expect(await activities(second.id)).toEqual([
         ['card_priority_changed', { from: null, to: 'urgent' }],
@@ -284,7 +284,7 @@ describeDb('responsáveis e prioridade do card (kanban_test)', () => {
           schema,
           logger: { logQuery: (query) => logged.push(query) },
         });
-        await getBoardPayload(counting, board.id, cardActor(member));
+        await getBoardPayload(counting, board.id, cardActor(member), noCovers());
         // Descarta o controle de transação (`begin ...`/`commit`).
         return logged.filter((query) => !/^(begin|commit|rollback)\b/i.test(query.trim()));
       };

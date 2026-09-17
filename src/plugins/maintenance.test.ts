@@ -110,7 +110,13 @@ describeDb('manutenção (kanban_test)', () => {
         .returning();
 
       const result = await runMaintenance(db(), NOW);
-      expect(result).toEqual({ notifications: 1, sessions: 2, throttle: 2, authTokens: 3 });
+      expect(result).toEqual({
+        notifications: 1,
+        sessions: 2,
+        throttle: 2,
+        authTokens: 3,
+        coverObjects: 0,
+      });
 
       expect(
         (await db().select({ id: notifications.id }).from(notifications)).map((r) => r.id).sort(),
@@ -136,6 +142,7 @@ describeDb('manutenção (kanban_test)', () => {
         sessions: 0,
         throttle: 0,
         authTokens: 0,
+        coverObjects: 0,
       });
     });
   });

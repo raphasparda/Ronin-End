@@ -15,7 +15,7 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { expectError, seedActor, seedTeam, type Actor } from '../../../test/actors';
-import { cardActor, unlockedCard } from '../../../test/cards';
+import { cardActor, noCovers, unlockedCard } from '../../../test/cards';
 import { createDbTestApp, createTestClock } from '../../../test/auth';
 import { describeDb, useTestDatabase } from '../../../test/db';
 import type { App } from '../../app';
@@ -390,7 +390,7 @@ describeDb('cards restritos: acesso e payload bloqueado (kanban_test)', () => {
           schema,
           logger: { logQuery: (query) => logged.push(query) },
         });
-        await getBoardPayload(counting, board.id, cardActor(actor));
+        await getBoardPayload(counting, board.id, cardActor(actor), noCovers());
         return logged.filter((query) => !/^(begin|commit|rollback)\b/i.test(query.trim()));
       };
 

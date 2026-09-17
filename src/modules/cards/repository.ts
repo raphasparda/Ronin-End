@@ -4,6 +4,7 @@ import {
   desc,
   eq,
   exists,
+  inArray,
   isNotNull,
   isNull,
   notExists,
@@ -15,6 +16,7 @@ import type { DbExecutor } from '../../db/client';
 import {
   boards,
   cardAssignees,
+  cardCovers,
   cardLabels,
   cards,
   cardViewers,
@@ -27,6 +29,7 @@ import {
   type ChecklistItemRow,
   type ChecklistRow,
   type CommentRow,
+  type CardCoverRow,
   type ListRow,
   type NewCardRow,
 } from '../../db/schema';
@@ -50,6 +53,10 @@ export type CardSummaryRow = Pick<
 > & {
   /** `false` = card restrito sem acesso: a resposta vira `LockedCard` (ADR 0015). */
   accessible: boolean;
+  /** Capa (ADR 0016): `null` sem capa — e sempre `null` em card bloqueado (o join é condicionado). */
+  coverObjectKey: string | null;
+  coverWidth: number | null;
+  coverHeight: number | null;
   hasDescription: boolean;
   checklistDone: number;
   checklistTotal: number;
@@ -186,6 +193,9 @@ export async function findCardSummaryRows(
       visibility: cards.visibility,
       archivedAt: cards.archivedAt,
       accessible: sql<boolean>`(${access})`.mapWith(Boolean),
+      coverObjectKey: cardCovers.objectKey,
+      coverWidth: cardCovers.width,
+      coverHeight: cardCovers.height,
       hasDescription: sql<boolean>`(${cards.description} <> '')`,
       checklistDone: sql<number>`coalesce(${checklistAgg.done}, 0)`.mapWith(Number),
       checklistTotal: sql<number>`coalesce(${checklistAgg.total}, 0)`.mapWith(Number),
@@ -199,7 +209,9 @@ export async function findCardSummaryRows(
     .innerJoin(lists, eq(lists.id, cards.listId))
     .innerJoin(boards, eq(boards.id, cards.boardId))
     .leftJoin(checklistAgg, eq(checklistAgg.cardId, cards.id))
-    .leftJoin(commentAgg, eq(commentAgg.cardId, cards.id));
+    .leftJoin(commentAgg, eq(commentAgg.cardId, cards.id))
+    // O acesso entra no próprio join: card bloqueado não traz nem a chave do objeto (RN26).
+    .leftJoin(cardCovers, and(eq(cardCovers.cardId, cards.id), access));
 
   if ('cardId' in scope) return query.where(scopeFilter).limit(1);
   if ('assigneeId' in scope) {
@@ -397,6 +409,89 @@ export async function deleteCardAssignee(
     .where(and(eq(cardAssignees.cardId, cardId), eq(cardAssignees.userId, userId)))
     .returning({ userId: cardAssignees.userId });
   return rows.length > 0;
+}
+
+// ---------------------------------------------------------------------------
+// Capa do card (Fatia 11, ADR 0016)
+// ---------------------------------------------------------------------------
+
+/** Capa do card (0..1). */
+export async function findCardCover(
+  db: DbExecutor,
+  cardId: string,
+): Promise<CardCoverRow | undefined> {
+  const [row] = await db.select().from(cardCovers).where(eq(cardCovers.cardId, cardId)).limit(1);
+  return row;
+}
+
+/** Grava a capa; trocar é `INSERT ... ON CONFLICT (card_id) DO UPDATE`. */
+export async function upsertCardCover(
+  db: DbExecutor,
+  values: {
+    cardId: string;
+    objectKey: string;
+    contentType: string;
+    sizeBytes: number;
+    width: number | null;
+    height: number | null;
+    uploadedBy: string;
+    now: Date;
+  },
+): Promise<void> {
+  await db
+    .insert(cardCovers)
+    .values({
+      cardId: values.cardId,
+      objectKey: values.objectKey,
+      contentType: values.contentType,
+      sizeBytes: values.sizeBytes,
+      width: values.width,
+      height: values.height,
+      uploadedBy: values.uploadedBy,
+      createdAt: values.now,
+      updatedAt: values.now,
+    })
+    .onConflictDoUpdate({
+      target: cardCovers.cardId,
+      set: {
+        objectKey: values.objectKey,
+        contentType: values.contentType,
+        sizeBytes: values.sizeBytes,
+        width: values.width,
+        height: values.height,
+        uploadedBy: values.uploadedBy,
+        updatedAt: values.now,
+      },
+    });
+}
+
+/** Apaga a linha da capa; `true` se existia. */
+export async function deleteCardCover(db: DbExecutor, cardId: string): Promise<boolean> {
+  const rows = await db
+    .delete(cardCovers)
+    .where(eq(cardCovers.cardId, cardId))
+    .returning({ cardId: cardCovers.cardId });
+  return rows.length > 0;
+}
+
+/** Chaves das capas dos cards de um quadro (exclusão do quadro apaga os objetos depois do commit). */
+export async function findBoardCoverKeys(db: DbExecutor, boardId: string): Promise<string[]> {
+  const rows = await db
+    .select({ objectKey: cardCovers.objectKey })
+    .from(cardCovers)
+    .innerJoin(cards, eq(cards.id, cardCovers.cardId))
+    .where(eq(cards.boardId, boardId));
+  return rows.map((row) => row.objectKey);
+}
+
+/** Quais das chaves informadas ainda têm linha em `card_covers` (varredura de órfãos). */
+export async function findExistingCoverKeys(db: DbExecutor, keys: string[]): Promise<Set<string>> {
+  if (keys.length === 0) return new Set();
+  const rows = await db
+    .select({ objectKey: cardCovers.objectKey })
+    .from(cardCovers)
+    .where(inArray(cardCovers.objectKey, keys));
+  return new Set(rows.map((row) => row.objectKey));
 }
 
 // ---------------------------------------------------------------------------

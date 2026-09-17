@@ -62,7 +62,12 @@ export const meRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
         response: { 200: myCardsResponseSchema, ...errorResponses(401) },
       },
     },
-    async (request) => ({ cards: await getMyCards(app.db, requireUser(request)) }),
+    async (request) => ({
+      cards: await getMyCards(app.db, requireUser(request), {
+        storage: app.coverStorage,
+        now: app.clock(),
+      }),
+    }),
   );
 
   done();
