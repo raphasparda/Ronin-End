@@ -8,8 +8,10 @@ MVP para uma equipe de até ~20 pessoas, autohospedado, com backend e auth próp
 
 ## Decisão
 - Monorepo pnpm workspaces: `apps/api` (Fastify), `apps/web` (React + Vite SPA), `packages/shared` (schemas Zod, códigos de erro, regras puras).
+
+> Atualização (2026-09-17): o monorepo foi dividido em dois repositórios (`ronin-api` e `ronin-web`), mantendo o monólito modular na API. Ver [ADR 0014](0014-dois-repositorios-e-shared-publicado.md).
 - A API é um monólito modular em **um único processo**, com módulos por contexto (`auth`, `boards`, `cards`, `completion`...). Módulos só se comunicam pelos `service.ts` exportados.
-- `@kanban/shared` é consumido como fonte TypeScript (sem etapa de build); a API é empacotada com `tsup` incluindo o shared.
+- `@raphasparda/ronin-shared` é consumido como fonte TypeScript (sem etapa de build); a API é empacotada com `tsup` incluindo o shared.
 - SPA (Vite) em vez de Next.js: app 100% autenticado, sem necessidade de SSR/SEO, e servir estático simplifica o deploy.
 
 ## Alternativas

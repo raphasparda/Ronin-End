@@ -500,7 +500,7 @@ Nenhuma muda schema.
 29. **Checklists e itens**: toda mutação 400 → 404 → `409 BOARD_ARCHIVED` (→ `409 INVALID_PLACEMENT` no `move`: `after` de outro checklist, inexistente ou o próprio item). Marcar item já marcado mantém `checkedBy`/`checkedAt` originais; desmarcar limpa os dois. Valores iguais → 200 sem gravar. Nenhuma ação de checklist gera atividade ou muda o status do card. Checklists no detalhe: `createdAt`, depois `id`.
 30. **Comentários**: `PATCH`/`DELETE` na ordem 400 → 404 → 403 → `409 BOARD_ARCHIVED` (não autor recebe 403 mesmo em quadro arquivado). `PATCH` com o mesmo corpo (após `trim`) → 200 sem alterar `editedAt`. O corpo é guardado como texto Markdown cru (só `trim`), sem sanitizar nem gerar HTML (ADR 0007).
 31. **Payload do quadro**: 6 consultas (o §9 listava 5 e omitia `labels`); teste garante que o número não cresce com cards, etiquetas e responsáveis.
-32. **Ganchos de notificação**: `onAssigned` (atribuição nova) e `onCommented` (comentário novo) em `apps/api/src/modules/notifications/hooks.ts`, chamados na transação da ação e hoje sem efeito. A tarefa 7.3 aplica lá a regra de não autonotificar e só destinatários ativos.
+32. **Ganchos de notificação**: `onAssigned` (atribuição nova) e `onCommented` (comentário novo) em `src/modules/notifications/hooks.ts`, chamados na transação da ação e hoje sem efeito. A tarefa 7.3 aplica lá a regra de não autonotificar e só destinatários ativos.
 33. **Locks**: quadro `FOR SHARE` → card `FOR UPDATE` → checklist → item / comentário (`FOR UPDATE`). Atribuir bloqueia o usuário alvo `FOR SHARE` (desativar em paralelo espera). Criar/editar/excluir etiqueta: quadro `FOR SHARE` → etiqueta `FOR UPDATE`.
 
 ### 18.4 Decisões fechadas na implementação do backend das Fatias 7, 8 e 9 (v1.8)

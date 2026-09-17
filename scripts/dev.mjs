@@ -1,5 +1,6 @@
-// pnpm dev — sobe tudo para desenvolvimento: PostgreSQL local (5433) -> migrations -> API (3000)
-// + web (5310). A API e o web só sobem depois que o banco responde e as migrations foram aplicadas.
+// pnpm dev — sobe a API para desenvolvimento: PostgreSQL local (5433) -> migrations -> API (3000).
+// A API só sobe depois que o banco responde e as migrations foram aplicadas. O web (ronin-web) roda
+// no outro repositório (`pnpm dev` lá, porta 5310) e faz proxy de /api para esta API.
 // Ctrl+C (ou fechar o terminal) derruba tudo e para o banco com `pg_ctl stop -m fast`. Se o banco já estiver rodando (pnpm db:dev em outro
 // terminal, Docker ou nativo), ele é reaproveitado e não é parado na saída.
 import { spawn, spawnSync } from 'node:child_process';
@@ -84,7 +85,7 @@ function spawnPnpm(args, env = process.env) {
 // Migrations antes da API: quem testa nunca precisa rodar `pnpm db:migrate` à mão. Idempotente.
 log('aplicando migrations...');
 /** @type {import('node:child_process').ChildProcess} */
-const migrator = spawnPnpm(['--filter', '@kanban/api', 'run', 'db:migrate'], {
+const migrator = spawnPnpm(['run', 'db:migrate'], {
   ...process.env,
   DATABASE_URL: databaseUrl,
 });
@@ -94,16 +95,18 @@ const migrateCode = await new Promise((resolvePromise) => {
 });
 if (closing) await new Promise(() => undefined); // Ctrl+C durante a migration: shutdown() encerra.
 if (migrateCode !== 0) {
-  log(`migrations falharam (código ${migrateCode}); API e web não foram iniciadas.`);
+  log(`migrations falharam (código ${migrateCode}); a API não foi iniciada.`);
   await shutdown(1);
 }
 
-app = spawnPnpm(['--parallel', '--filter', '@kanban/api', '--filter', '@kanban/web', 'run', 'dev']);
+app = spawnPnpm(['run', 'dev:api']);
 
-log('API: http://127.0.0.1:3000/api/health  |  Web: http://127.0.0.1:5310  |  Ctrl+C para parar');
+log(
+  'API: http://127.0.0.1:3000/api/health  |  Web (ronin-web, pnpm dev): http://127.0.0.1:5310  |  Ctrl+C para parar',
+);
 
 app.on('exit', (code) => {
   if (closing) return;
-  log(`api/web encerraram (código ${code ?? 'null'})`);
+  log(`API encerrou (código ${code ?? 'null'})`);
   void shutdown(code ?? 1);
 });

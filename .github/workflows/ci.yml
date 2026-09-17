@@ -1,4 +1,5 @@
-# CI do Ronin: lint, typecheck, testes (com PostgreSQL real) e build; E2E em job separado.
+# CI do ronin-api: lint, typecheck, testes (shared + API com PostgreSQL real), build e verificação
+# do pacote @raphasparda/ronin-shared. Os E2E ficam no ronin-web (que sobe esta API).
 # Detalhes, variáveis e como reproduzir localmente: docs/ops/ci.md.
 name: CI
 
@@ -21,7 +22,6 @@ env:
   # Serviço postgres:18-alpine publicado na 5432 do runner. Credenciais descartáveis, só do CI.
   DATABASE_URL: postgres://kanban:kanban@127.0.0.1:5432/kanban
   TEST_DATABASE_URL: postgres://kanban:kanban@127.0.0.1:5432/kanban_test
-  E2E_DATABASE_URL: postgres://kanban:kanban@127.0.0.1:5432/kanban_e2e
   APP_ORIGIN: http://127.0.0.1:5310
   LOG_LEVEL: warn
 
@@ -74,69 +74,20 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: Testes
+      - name: Testes (shared + API)
         run: pnpm test
 
-      - name: Build
+      - name: Build (dist do shared + API)
         run: pnpm build
 
-  e2e:
-    name: E2E (Playwright)
-    needs: checks
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    services:
-      postgres:
-        image: postgres:18-alpine
-        env:
-          POSTGRES_USER: kanban
-          POSTGRES_PASSWORD: kanban
-          POSTGRES_DB: kanban
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U kanban -d kanban"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Instalar pnpm
-        uses: pnpm/action-setup@v6
-
-      - name: Instalar Node.js (.nvmrc) com cache do store do pnpm
-        uses: actions/setup-node@v7
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-
-      - name: Criar banco E2E (kanban_e2e)
-        run: docker exec "${{ job.services.postgres.id }}" psql -U kanban -d kanban -v ON_ERROR_STOP=1 -c "CREATE DATABASE kanban_e2e OWNER kanban"
-
-      - name: Instalar dependências
-        run: pnpm install --frozen-lockfile
-
-      - name: Instalar Chromium do Playwright
-        working-directory: apps/web
-        run: pnpm exec playwright install --with-deps chromium
-
-      # e2e/run.mjs aplica as migrations em kanban_e2e e roda o Playwright (API 3100, web 5320).
-      - name: E2E
-        run: pnpm test:e2e
-
-      - name: Publicar relatório e traces (falha)
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: playwright-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            apps/web/playwright-report
-            apps/web/test-results
-          retention-days: 7
-          if-no-files-found: ignore
+      # Garante que o tarball publicável contém dist/ e nada de fonte ou testes.
+      - name: Verificar pacote do shared
+        run: |
+          pnpm --filter "./packages/shared" pack --pack-destination "$RUNNER_TEMP/shared-pack"
+          tar -tzf "$RUNNER_TEMP"/shared-pack/*.tgz | tee "$RUNNER_TEMP/shared-contents.txt"
+          grep -qx 'package/dist/index.js' "$RUNNER_TEMP/shared-contents.txt"
+          grep -qx 'package/dist/index.d.ts' "$RUNNER_TEMP/shared-contents.txt"
+          if grep -E '^package/(src|test)/|\.test\.' "$RUNNER_TEMP/shared-contents.txt"; then
+            echo "::error::O tarball do shared contém fonte ou testes."
+            exit 1
+          fi

@@ -1,30 +1,53 @@
-# Ronin
+# Ronin API
 
-Quadros de tarefas para uma equipe pequena de software, com backend e dados próprios. Monorepo TypeScript (pnpm workspaces): `apps/api` (Fastify + PostgreSQL + Drizzle), `apps/web` (React + Vite + Tailwind) e `packages/shared` (schemas Zod e regras puras).
+Backend do Ronin: quadros de tarefas para uma equipe pequena de software, com backend e dados próprios. Fastify 5 + PostgreSQL 18 + Drizzle, em TypeScript (Node 24).
+
+Este repositório (workspace pnpm) contém:
+
+- a **API** na raiz (`src/`, `test/`, `drizzle/`);
+- o pacote **`@raphasparda/ronin-shared`** (`packages/shared`): contratos Zod e regras de domínio usados pela API e pelo web, publicável no GitHub Packages;
+- o **PostgreSQL local de desenvolvimento** (`scripts/dev-db`), sem Docker e sem admin;
+- a documentação de produto, arquitetura e operação (`docs/`).
+
+O front-end (React + Vite) e os testes E2E ficam no repositório irmão **ronin-web**.
 
 Público deste README: quem vai rodar, testar ou desenvolver o Ronin na própria máquina.
 
-## Como testar
+## Como rodar
 
 Precisa só de **Node.js 24** e **pnpm 10** (`npm i -g pnpm@10`, sem admin). Não precisa de Docker, de PostgreSQL instalado nem de senha nenhuma.
 
-1. `pnpm install`
-2. `pnpm dev`
-3. Abra <http://127.0.0.1:5310>
+Os dois repositórios ficam lado a lado na mesma pasta, com os nomes de pasta `ronin-api` e `ronin-web` (o web usa `../ronin-api`):
 
-Se abrir `http://localhost:5310`, o servidor de desenvolvimento redireciona sozinho para `http://127.0.0.1:5310` (mesmo caminho e query). O motivo: a API só aceita mutações com `Origin` igual ao `APP_ORIGIN` (`http://127.0.0.1:5310`).
+```powershell
+git clone https://github.com/raphasparda/Ronin-End.git ronin-api
+git clone https://github.com/raphasparda/Ronin-front.git ronin-web
+```
 
-A porta do web é **5310**, e não a 5173 padrão do Vite, porque a 5173 já é usada por outro projeto na máquina do cliente. A porta é fixa: se estiver ocupada, o Vite falha em vez de trocar de porta.
+```text
+<pasta>/
+├─ ronin-api/   (este: raphasparda/Ronin-End)
+└─ ronin-web/   (raphasparda/Ronin-front)
+```
 
-O `pnpm dev` cria o `.env` (se não existir), sobe um PostgreSQL 18 local do próprio projeto na porta 5433 (dados em `.data/postgres`), aplica as migrations pendentes e então sobe a API (porta 3000) e o web (porta 5310). **Ctrl+C** derruba tudo, inclusive o banco. A primeira execução leva alguns segundos a mais para criar o banco.
+1. Neste repositório: `pnpm install` e `pnpm dev`.
+2. Em outro terminal, no ronin-web: `pnpm install` e `pnpm dev`.
+3. Abra <http://127.0.0.1:5310>.
+
+Instale o ronin-api primeiro: o ronin-web liga o `@raphasparda/ronin-shared` direto desta pasta (`link:../ronin-api/packages/shared`).
+
+O `pnpm dev` daqui cria o `.env` (se não existir), sobe um PostgreSQL 18 local do próprio projeto na porta 5433 (dados em `.data/postgres`), aplica as migrations pendentes e então sobe a API em watch na porta 3000 (<http://127.0.0.1:3000/api/health>). **Ctrl+C** derruba tudo, inclusive o banco. A primeira execução leva alguns segundos a mais para criar o banco.
+
+O web roda na porta **5310** (a 5173 é de outro projeto na máquina do cliente) e faz proxy de `/api` para `127.0.0.1:3000`. A API só aceita mutações com `Origin` igual ao `APP_ORIGIN` (`http://127.0.0.1:5310`); por isso o servidor de dev do web redireciona `localhost:5310` para `127.0.0.1:5310`.
 
 Detalhes, problemas comuns e como zerar o banco: [`docs/ops/setup-local.md`](docs/ops/setup-local.md). Problemas conhecidos (travamentos do Node no Windows, bloqueios de login em testes): [`docs/ops/known-issues.md`](docs/ops/known-issues.md).
 
 ## Status
 
-- **Fatias 0 a 9 do MVP: implementadas**, com testes de API, de componentes e E2E (Playwright), e CI no GitHub Actions.
+- **Fatias 0 a 9 do MVP: implementadas**, com testes de API, de componentes e E2E (Playwright, no ronin-web), e CI no GitHub Actions nos dois repositórios.
 - **Fatia 10 (produção): pendente.** Ainda não existem Dockerfile, Caddyfile, compose de produção, backup nem documentação de instalação na VPS. Não exponha esta versão na internet. Os bloqueios de segurança apontados para o deploy estão em [`docs/ops/known-issues.md`](docs/ops/known-issues.md#4-bloqueios-do-deploy-fatia-10).
 - Há uma decisão de produto pendente sobre o bloqueio de login por e-mail (mesmo documento).
+- Divisão do monorepo em ronin-api e ronin-web: [ADR 0014](docs/architecture/adr/0014-dois-repositorios-e-shared-publicado.md).
 
 Histórico de entregas: [`CHANGELOG.md`](CHANGELOG.md).
 
@@ -91,7 +114,7 @@ Não há tempo real: o quadro recarrega a cada 30 s, ao voltar para a aba e depo
 
 ### 1. Criar o primeiro Admin
 
-Com o banco vazio, <http://127.0.0.1:5310> abre a tela **Configurar a equipe**. Preencha nome da equipe, seu nome, e-mail, senha (mínimo 10 caracteres, diferente do e-mail) e fuso horário, e clique em **Criar conta e começar**. Essa conta é Admin, e a tela de configuração não aparece mais para ninguém.
+Com o banco vazio e o web rodando (ronin-web, `pnpm dev`), <http://127.0.0.1:5310> abre a tela **Configurar a equipe**. Preencha nome da equipe, seu nome, e-mail, senha (mínimo 10 caracteres, diferente do e-mail) e fuso horário, e clique em **Criar conta e começar**. Essa conta é Admin, e a tela de configuração não aparece mais para ninguém.
 
 O envio desse formulário tem limite de 5 tentativas a cada 15 minutos por IP (veja [`docs/ops/known-issues.md`](docs/ops/known-issues.md#3-limites-de-requisição-que-aparecem-em-testes)).
 
@@ -119,26 +142,24 @@ Gerar um novo link cancela o anterior. Quem sabe a própria senha troca em **Meu
 
 Rode na raiz do repositório (PowerShell ou qualquer terminal).
 
-| Comando                             | Faz                                                                                     |
-| ----------------------------------- | --------------------------------------------------------------------------------------- |
-| `pnpm dev`                          | banco local (5433), migrations, `api` (3000) e `web` (5310)                             |
-| `pnpm dev:app`                      | só `api` e `web` em paralelo (banco por sua conta)                                      |
-| `pnpm db:dev`                       | só o banco local, em primeiro plano (Ctrl+C para parar)                                 |
-| `pnpm db:migrate`                   | aplica as migrations pendentes em `DATABASE_URL` (idempotente)                          |
-| `pnpm db:generate`                  | gera migration a partir do schema (drizzle-kit)                                         |
-| `pnpm db:up` / `pnpm db:down`       | sobe/derruba o Postgres do `docker-compose.yml` (alternativa com Docker)                |
-| `pnpm test`                         | testes de todos os pacotes, um por vez (sobe o banco local se precisar)                 |
-| `pnpm test:e2e`                     | Playwright em `apps/web`, com banco `kanban_e2e` e portas próprias (API 3100, web 5320) |
-| `pnpm lint` / `pnpm lint:fix`       | ESLint em todo o monorepo                                                               |
-| `pnpm typecheck`                    | TypeScript em todos os pacotes                                                          |
-| `pnpm format` / `pnpm format:check` | Prettier                                                                                |
-| `pnpm build`                        | build de `web` e `api`                                                                  |
+| Comando                             | Faz                                                                        |
+| ----------------------------------- | -------------------------------------------------------------------------- |
+| `pnpm dev`                          | banco local (5433), migrations e API em watch (3000)                       |
+| `pnpm dev:api`                      | só a API em watch (banco por sua conta)                                    |
+| `pnpm db:dev`                       | só o banco local, em primeiro plano (Ctrl+C para parar)                    |
+| `pnpm db:migrate`                   | aplica as migrations pendentes em `DATABASE_URL` (idempotente)             |
+| `pnpm db:generate`                  | gera migration a partir do schema (drizzle-kit)                            |
+| `pnpm db:up` / `pnpm db:down`       | sobe/derruba o Postgres do `docker-compose.yml` (alternativa com Docker)   |
+| `pnpm test`                         | testes do shared (com cobertura) e da API (sobe o banco local se precisar) |
+| `pnpm test:api`                     | só os testes da API                                                        |
+| `pnpm lint` / `pnpm lint:fix`       | ESLint                                                                     |
+| `pnpm typecheck`                    | TypeScript da API e do shared                                              |
+| `pnpm format` / `pnpm format:check` | Prettier                                                                   |
+| `pnpm build`                        | `dist/` do shared (ESM + `.d.ts`) e `dist/server.js` da API                |
+| `pnpm start`                        | roda o build da API (`node dist/server.js`)                                |
+| `pnpm shared:pack`                  | gera o tarball publicável do `@raphasparda/ronin-shared` (só `dist/`)      |
 
-Na primeira vez que rodar `pnpm test:e2e`, instale o Chromium do Playwright:
-
-```powershell
-pnpm --filter @kanban/web exec playwright install chromium
-```
+Os E2E rodam no ronin-web (`pnpm test:e2e` lá), que usa este repositório para subir o banco `kanban_e2e`, aplicar as migrations e iniciar a API na porta 3100 (web na 5320).
 
 ## Banco de dados
 
@@ -147,16 +168,16 @@ pnpm --filter @kanban/web exec playwright install chromium
 O pacote npm `embedded-postgres` traz os binários oficiais do PostgreSQL 18 para Windows, Linux e macOS. Os scripts do repositório criam e controlam um cluster só deste projeto:
 
 - endereço `127.0.0.1:5433` (não conflita com um Postgres nativo na 5432), usuário/senha `kanban`/`kanban` (**somente desenvolvimento**);
-- bancos `kanban` (app) e `kanban_test` (testes), criados se faltarem; `kanban_e2e` é criado pelo `pnpm test:e2e`;
+- bancos `kanban` (app) e `kanban_test` (testes), criados se faltarem; `kanban_e2e` é criado pelo `pnpm test:e2e` do ronin-web;
 - dados em `.data/postgres` e log em `.data/postgres.log` (pasta ignorada pelo git).
 
-Se o banco já estiver respondendo no `DATABASE_URL` (por exemplo, `pnpm db:dev` em outro terminal, Docker ou Postgres nativo), o `pnpm dev` reaproveita e não o derruba ao sair. Antes de subir a API, o `pnpm dev` sempre aplica as migrations pendentes, então não é preciso migrar à mão.
+Se o banco já estiver respondendo no `DATABASE_URL` (por exemplo, `pnpm db:dev` em outro terminal, Docker ou Postgres nativo), o `pnpm dev` reaproveita e não o derruba ao sair. Antes de subir a API, o `pnpm dev` sempre aplica as migrations pendentes.
 
 ### Alternativa: Docker
 
 ```powershell
 pnpm db:up     # sobe postgres:18-alpine na porta POSTGRES_PORT (5433 no .env.example)
-pnpm db:down   # para e remove o container (os dados ficam no volume kanban_postgres-data)
+pnpm db:down   # para e remove o container (os dados ficam no volume)
 ```
 
 Não rode junto com o banco local: os dois usam a 5433. Com o container de pé, o `pnpm dev` detecta e reaproveita. O banco `kanban_test` é criado por `infra/postgres/init/01-test-db.sql` apenas na primeira subida do volume.
@@ -173,41 +194,51 @@ O script é idempotente: cria o role `kanban` (senha `kanban`) e os bancos `kanb
 
 ## Testes
 
-`pnpm test` roda os testes de todos os pacotes, um pacote por vez (em paralelo, a carga dos testes de banco da API deixava testes de UI com timeout). Os testes de integração da API usam `TEST_DATABASE_URL`: se ele não responder e apontar para `127.0.0.1`, o setup global do Vitest (`apps/api/test/global-setup.ts`) sobe o banco local sozinho e o para no final. Em seguida aplica as migrations em `kanban_test`; testes de banco usam `useTestDatabase()` (`apps/api/test/db.ts`), que trunca as tabelas antes de cada teste. Se o `pnpm dev` ou o `pnpm db:dev` já estiverem rodando, o banco é reaproveitado.
+`pnpm test` roda os testes do `@raphasparda/ronin-shared` (cobertura mínima de 95% em `domain/`) e depois os da API. Os testes de integração da API usam `TEST_DATABASE_URL`: se ele não responder e apontar para `127.0.0.1`, o setup global do Vitest (`test/global-setup.ts`) sobe o banco local sozinho e o para no final. Em seguida aplica as migrations em `kanban_test`; testes de banco usam `useTestDatabase()` (`test/db.ts`), que trunca as tabelas antes de cada teste. Se o `pnpm dev` ou o `pnpm db:dev` já estiverem rodando, o banco é reaproveitado.
 
-`pnpm test:e2e` (`apps/web/e2e/run.mjs`) prepara o banco isolado `kanban_e2e`, aplica as migrations e roda o Playwright, que sobe API e web nas portas 3100 e 5320. Dá para rodar com o `pnpm dev` aberto. Argumentos extras vão para o Playwright, por exemplo `pnpm test:e2e --headed`.
+CI (GitHub Actions: lint, typecheck, testes, build e verificação do pacote): [`docs/ops/ci.md`](docs/ops/ci.md).
 
-CI (GitHub Actions: lint, typecheck, testes, build e E2E): [`docs/ops/ci.md`](docs/ops/ci.md).
+## Pacote `@raphasparda/ronin-shared`
+
+- Aqui dentro, a API usa a fonte TS pelo workspace (`workspace:*`); nada a buildar no dia a dia.
+- O ronin-web usa `link:../ronin-api/packages/shared` localmente, ou a versão publicada no GitHub Packages.
+- Publicação: tag `shared-v<versão>` dispara `.github/workflows/publish-shared.yml`.
+- O escopo `@raphasparda` é o dono dos repositórios no GitHub (exigência do GitHub Packages); o `.npmrc` já aponta esse escopo para `https://npm.pkg.github.com`. Se o dono mudar: `node scripts/rename-shared-package.mjs @<novo-dono>/ronin-shared --web ../ronin-web`.
+
+Passo a passo (renomear, publicar, trocar o web para a versão do registro com `.npmrc` e token): [`docs/ops/shared-package.md`](docs/ops/shared-package.md).
 
 ## Estrutura de pastas
 
 ```text
-apps/api/          API Fastify: módulos, plugins, schema do banco e migrations (apps/api/drizzle)
-apps/web/          SPA React: features por área, componentes e E2E (apps/web/e2e)
-packages/shared/   contratos Zod e regras de domínio usados por API e web
-scripts/           pnpm dev, pnpm db:dev e controle do PostgreSQL local
+src/               API Fastify: módulos, plugins, config e schema do banco
+test/              setup global do Vitest (banco), helpers de app, login e fixtures
+drizzle/           migrations SQL geradas (commitadas)
+packages/shared/   @raphasparda/ronin-shared: contratos Zod e regras de domínio (publicável)
+scripts/           pnpm dev, pnpm db:dev, PostgreSQL local e renomeação do pacote shared
 infra/postgres/    scripts SQL das alternativas Docker e Postgres nativo
-docs/              produto, arquitetura, design e operação
+docs/              produto, arquitetura (ADRs) e operação
 ```
 
 ## Documentação
 
-| Documento                                                        | Conteúdo                                                    |
-| ---------------------------------------------------------------- | ----------------------------------------------------------- |
-| [`docs/product/scope.md`](docs/product/scope.md)                 | escopo do MVP, histórias, regras de negócio, fora de escopo |
-| [`docs/architecture/overview.md`](docs/architecture/overview.md) | arquitetura, modelo de dados, segurança, deploy planejado   |
-| [`docs/architecture/api.md`](docs/architecture/api.md)           | contrato da API REST e decisões de implementação (§18)      |
-| [`docs/architecture/plan.md`](docs/architecture/plan.md)         | plano de implementação por fatias                           |
-| [`docs/architecture/adr/`](docs/architecture/adr/)               | decisões de arquitetura (ADRs)                              |
-| [`docs/design/design-system.md`](docs/design/design-system.md)   | cores, tokens, temas e componentes                          |
-| [`docs/design/screens.md`](docs/design/screens.md)               | telas e fluxos                                              |
-| [`docs/ops/setup-local.md`](docs/ops/setup-local.md)             | ambiente local em detalhe e problemas comuns                |
-| [`docs/ops/ci.md`](docs/ops/ci.md)                               | pipeline do GitHub Actions                                  |
-| [`docs/ops/known-issues.md`](docs/ops/known-issues.md)           | problemas conhecidos, limites e pendências do deploy        |
+| Documento                                                        | Conteúdo                                                           |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------ |
+| [`docs/product/scope.md`](docs/product/scope.md)                 | escopo do MVP, histórias, regras de negócio, fora de escopo        |
+| [`docs/architecture/overview.md`](docs/architecture/overview.md) | arquitetura, modelo de dados, segurança, deploy planejado          |
+| [`docs/architecture/api.md`](docs/architecture/api.md)           | contrato da API REST e decisões de implementação (§18)             |
+| [`docs/architecture/plan.md`](docs/architecture/plan.md)         | plano de implementação por fatias                                  |
+| [`docs/architecture/adr/`](docs/architecture/adr/)               | decisões de arquitetura (ADRs)                                     |
+| [`docs/ops/setup-local.md`](docs/ops/setup-local.md)             | ambiente local em detalhe e problemas comuns                       |
+| [`docs/ops/ci.md`](docs/ops/ci.md)                               | pipelines do GitHub Actions                                        |
+| [`docs/ops/shared-package.md`](docs/ops/shared-package.md)       | build, escopo, publicação e consumo do `@raphasparda/ronin-shared` |
+| [`docs/ops/known-issues.md`](docs/ops/known-issues.md)           | problemas conhecidos, limites e pendências do deploy               |
 
-Com a API rodando em desenvolvimento, a documentação OpenAPI interativa fica em <http://127.0.0.1:5310/api/docs>.
+Design (cores, tokens, telas) fica no ronin-web (`docs/design/`).
+
+Com a API rodando em desenvolvimento, a documentação OpenAPI interativa fica em <http://127.0.0.1:3000/api/docs> (ou <http://127.0.0.1:5310/api/docs> pelo proxy do web).
 
 ## Convenções
 
 - Finais de linha LF (`.gitattributes`, `.editorconfig`). Scripts do `package.json` não usam sintaxe de shell POSIX, para funcionar no PowerShell.
 - `.env` nunca é commitado; toda variável nova entra no `.env.example` com comentário.
+- Mudança de contrato: altere `docs/architecture/api.md` e `packages/shared` no mesmo PR; publique nova versão do shared se o web consumir pelo registro.

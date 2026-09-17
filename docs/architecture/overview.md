@@ -19,14 +19,14 @@ Monólito modular em TypeScript, autohospedado, uma instância = um workspace (u
 ```mermaid
 flowchart LR
   subgraph Navegador
-    WEB["apps/web<br/>React + Vite (SPA)<br/>TanStack Query, polling"]
+    WEB["ronin-web<br/>React + Vite (SPA)<br/>TanStack Query, polling"]
   end
   subgraph Servidor["Servidor (Docker)"]
     CADDY["Caddy<br/>HTTPS, arquivos estáticos,<br/>proxy /api"]
-    API["apps/api<br/>Fastify (monólito modular)"]
+    API["ronin-api<br/>Fastify (monólito modular)"]
     PG[("PostgreSQL 18")]
   end
-  SHARED["packages/shared<br/>schemas Zod, códigos de erro,<br/>regras puras (estado do prazo)"]
+  SHARED["@raphasparda/ronin-shared (ronin-api/packages/shared)<br/>schemas Zod, códigos de erro,<br/>regras puras (estado do prazo)"]
 
   WEB -- "HTTPS mesma origem<br/>cookie de sessão httpOnly" --> CADDY
   CADDY -- "/api/*" --> API
@@ -64,19 +64,21 @@ Versões: fixar a última estável compatível no momento da Fatia 0 e registrar
 | Front build | Vite 7 + React 19 | SPA; não há necessidade de SSR/SEO (app autenticado). |
 | Rotas front | `react-router` 7 (modo biblioteca, `createBrowserRouter`) | Maduro, simples. |
 | Estado servidor | TanStack Query 5 | Cache, polling, updates otimistas com rollback. |
-| Estilo | Tailwind CSS 4 com tokens em `apps/web/src/styles/globals.css` (`@theme` + variáveis CSS) | Decisão do cliente. |
+| Estilo | Tailwind CSS 4 com tokens em `src/styles/globals.css` (ronin-web) (`@theme` + variáveis CSS) | Decisão do cliente. |
 | Drag and drop | `@dnd-kit/core` + `@dnd-kit/sortable` | Suporte a teclado e toque, acessível, maduro. |
 | Markdown | `react-markdown` + `remark-gfm` (sem `rehype-raw`) | Render sem HTML cru, seguro contra XSS (ADR 0007). |
 | Fontes | `@fontsource/*` (self-hosted) | Sem CDN externo (LGPD). |
 | Testes | Vitest, Testing Library, MSW (mocks HTTP no front), Playwright + `@axe-core/playwright` | Padrão da casa; MSW permite o front avançar antes da API. |
 | Lint/format | ESLint (flat config, `typescript-eslint`) + Prettier | Padrão. |
-| Build API | `tsup` (bundle da API incluindo `@kanban/shared`) | Um artefato JS para a imagem Docker. |
+| Build API | `tsup` (bundle da API incluindo `@raphasparda/ronin-shared`) | Um artefato JS para a imagem Docker. |
 | Dev API | `tsx watch` | Roda TS direto no Windows sem build. |
 | Backup | `pg_dump` + `restic` (container `backup` em produção) | Backup criptografado, incremental e com retenção para destino fora da VPS (ADR 0013). |
 
 Proibido: Supabase, Firebase, PocketBase ou qualquer BaaS; login social; analytics/telemetria de terceiros; CDNs externos.
 
 ## 3. Estrutura do monorepo
+
+> Atualização (2026-09-17): o código foi dividido em dois repositórios, `ronin-api` (API na raiz + `packages/shared`) e `ronin-web` (SPA na raiz + `e2e/`). Os caminhos `apps/api/...` abaixo valem hoje na raiz do ronin-api, e `apps/web/...` na raiz do ronin-web. Decisão e detalhes: [ADR 0014](adr/0014-dois-repositorios-e-shared-publicado.md).
 
 ```
 kanban/
@@ -134,7 +136,7 @@ kanban/
 │     ├─ index.html
 │     └─ vite.config.ts
 ├─ packages/
-│  └─ shared/                      # @kanban/shared
+│  └─ shared/                      # @raphasparda/ronin-shared
 │     └─ src/
 │        ├─ index.ts
 │        ├─ errors.ts              # ErrorCode (union) + envelope
@@ -160,8 +162,8 @@ kanban/
 ```
 
 Regras de dependência:
-- `apps/web` e `apps/api` importam `@kanban/shared`. `shared` não importa nada dos apps e não depende de Node nem de DOM (só `zod` e `fractional-indexing` se preciso).
-- `@kanban/shared` é consumido **como fonte TS** (`"exports": { ".": "./src/index.ts" }`). Vite, Vitest e tsx entendem TS; o build da API (tsup) empacota o shared com `noExternal: ['@kanban/shared']`.
+- `apps/web` e `apps/api` importam `@raphasparda/ronin-shared`. `shared` não importa nada dos apps e não depende de Node nem de DOM (só `zod` e `fractional-indexing` se preciso).
+- `@raphasparda/ronin-shared` é consumido **como fonte TS** (`"exports": { ".": "./src/index.ts" }`). Vite, Vitest e tsx entendem TS; o build da API (tsup) empacota o shared com `noExternal: ['@raphasparda/ronin-shared']`.
 - Dentro da API, módulos só conversam por funções exportadas do `service.ts` de outro módulo. Rotas nunca importam `db/schema` de outro módulo diretamente para escrever. Mudanças de `status` do card só acontecem via `modules/completion`.
 
 Windows (ambiente do cliente):
@@ -178,10 +180,10 @@ Scripts de raiz (contrato comum a todo o projeto):
 | `pnpm dev:app` | só `api` e `web` em paralelo (banco por conta de quem roda) |
 | `pnpm db:dev` | só o PostgreSQL local, em primeiro plano (idempotente) |
 | `pnpm db:up` / `pnpm db:down` | alternativa Docker: `docker compose up -d postgres` / `docker compose down` |
-| `pnpm db:generate` | `drizzle-kit generate` em `apps/api` |
+| `pnpm db:generate` | `drizzle-kit generate` (ronin-api) |
 | `pnpm db:migrate` | aplica migrations no `DATABASE_URL` |
 | `pnpm lint` / `pnpm typecheck` / `pnpm test` | em todos os pacotes |
-| `pnpm test:e2e` | Playwright em `apps/web` |
+| `pnpm test:e2e` | Playwright (ronin-web) |
 | `pnpm build` | build de `web` (estático) e `api` (tsup) |
 
 Variáveis de ambiente (`.env.example`):
@@ -400,7 +402,7 @@ Ordenação por prioridade (Meus cards): `urgent` > `high` > `medium` > `low` > 
 
 ### 5.1.1 Implementado: diagrama ER e índices
 
-Schema Drizzle em `apps/api/src/db/schema/` (`workspace.ts`, `users.ts`, `auth.ts`, `boards.ts`, `cards.ts`, `labels.ts`, `checklists.ts`, `comments.ts`, `notifications.ts`, todos exportados por `index.ts`); SQL em `apps/api/drizzle/`. Todas as tabelas do MVP (fatias 1–9) já existem:
+Schema Drizzle em `src/db/schema/` (`workspace.ts`, `users.ts`, `auth.ts`, `boards.ts`, `cards.ts`, `labels.ts`, `checklists.ts`, `comments.ts`, `notifications.ts`, todos exportados por `index.ts`); SQL em `drizzle/`. Todas as tabelas do MVP (fatias 1–9) já existem:
 
 | Migration | Tarefa | Conteúdo |
 |-----------|--------|----------|
@@ -758,7 +760,7 @@ Envelope único (schema `errorResponseSchema` no shared):
 
 - `GET /api/health` → `{ status: "ok", db: "ok" }` (faz `SELECT 1`; 503 se falhar).
 - Logs JSON do pino para stdout (Docker coleta).
-- Migrations: `drizzle-kit generate` gera SQL em `apps/api/drizzle/` (commitado; revisar o SQL antes). Em produção, o container da API roda `node dist/migrate.js && node dist/server.js`.
+- Migrations: `drizzle-kit generate` gera SQL em `drizzle/` (commitado; revisar o SQL antes). Em produção, o container da API roda `node dist/migrate.js && node dist/server.js`.
 - Deploy (ADR 0009): VPS Linux de entrada (1–2 vCPU, 2 GB RAM) com Docker Engine + Compose plugin. `infra/docker-compose.prod.yml` com `postgres`, `api`, `caddy`, `backup`. Domínio próprio, HTTPS automático (Let's Encrypt via Caddy), HTTP redireciona para HTTPS.
 - Rede: só o Caddy publica portas (80/443). **O Postgres não tem `ports:`** (acessível só na rede interna do compose). Firewall do host (UFW) liberando apenas 22, 80 e 443; SSH só por chave. Documentar que o Docker ignora o UFW para portas publicadas, por isso o banco nunca publica porta.
 - Reboot: serviço `docker` habilitado no systemd; todos os containers com `restart: unless-stopped`; `api` com `depends_on: { postgres: { condition: service_healthy } }`. Teste de aceite: `sudo reboot` e `/api/health` responde sem intervenção.
@@ -770,15 +772,15 @@ Envelope único (schema `errorResponseSchema` no shared):
 | Camada | Ferramenta | O que cobre | Onde |
 |--------|-----------|-------------|------|
 | Domínio puro | Vitest | `getDueState` (limites 24h, sem hora, concluído), `nextPaletteColor`, ranking de prioridade, schemas Zod (normalização de e-mail, limites) | `packages/shared/src/**/*.test.ts` |
-| API integração (principal) | Vitest + `app.inject()` + Postgres real (`kanban_test`) | Toda rota: sucesso, validação, 401, 403, CSRF, conflitos. Matriz de conclusão/reabertura (ADR 0010). Ordenação concorrente. Revogação de sessões. | `apps/api/src/modules/**/*.test.ts` |
-| Front componentes | Vitest + Testing Library + MSW | Face do card (estados de prazo com texto), filtro, rollback do movimento otimista, formulários com erros de validação, "Mover para…" por teclado | `apps/web/src/**/*.test.tsx` |
-| E2E | Playwright (Chromium no CI; Firefox/WebKit localmente antes do release) | Fluxos críticos (lista em `plan.md` Fatia 10) | `apps/web/e2e/` |
+| API integração (principal) | Vitest + `app.inject()` + Postgres real (`kanban_test`) | Toda rota: sucesso, validação, 401, 403, CSRF, conflitos. Matriz de conclusão/reabertura (ADR 0010). Ordenação concorrente. Revogação de sessões. | `src/modules/**/*.test.ts` |
+| Front componentes | Vitest + Testing Library + MSW | Face do card (estados de prazo com texto), filtro, rollback do movimento otimista, formulários com erros de validação, "Mover para…" por teclado | `src/**/*.test.tsx` (ronin-web) |
+| E2E | Playwright (Chromium no CI; Firefox/WebKit localmente antes do release) | Fluxos críticos (lista em `plan.md` Fatia 10) | `e2e/` (ronin-web) |
 | Acessibilidade | `@axe-core/playwright` | zero violações "serious/critical" nas telas principais nos dois temas | E2E |
 
 Infra de teste da API:
 - `vitest.config.ts` da API: `globalSetup` aplica migrations em `TEST_DATABASE_URL`; `fileParallelism: false`; `beforeEach` roda `TRUNCATE ... RESTART IDENTITY CASCADE` em todas as tabelas (exceto a de migrations).
 - Argon2 nos testes: `lib/password.ts` aceita parâmetros reduzidos quando `NODE_ENV=test` (`memoryCost: 1024, timeCost: 1`) para velocidade. Produção nunca usa esse caminho.
-- Helpers em `apps/api/test/`: `createTestApp()`, `factories` (`createUser`, `createBoard`, `createCard`...), `loginAs(user)` → retorna headers com cookie + `Origin` + `X-Kanban-Csrf`.
+- Helpers em `test/`: `createTestApp()`, `factories` (`createUser`, `createBoard`, `createCard`...), `loginAs(user)` → retorna headers com cookie + `Origin` + `X-Kanban-Csrf`.
 - Relógio: serviços recebem `now` via `request.server.clock()` (decorator substituível nos testes) para testar prazos, expirações e limpeza.
 
 CI (`.github/workflows/ci.yml`): job único em `ubuntu-latest` com serviço `postgres:18-alpine`; passos `pnpm install --frozen-lockfile` → `lint` → `typecheck` → `test` → `build` → `test:e2e` (sobe API + `vite preview` com proxy). Artefatos do Playwright em falha.

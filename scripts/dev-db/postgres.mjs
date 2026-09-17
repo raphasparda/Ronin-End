@@ -8,8 +8,10 @@
 // - Dados em `.data/postgres` (gitignored), porta/usuário/senha vindos do `DATABASE_URL`
 //   (padrão `postgres://kanban:kanban@127.0.0.1:5433/kanban`), só em 127.0.0.1.
 //
-// Usado por `scripts/db-dev.mjs` (pnpm db:dev), `scripts/dev.mjs` (pnpm dev) e pelo globalSetup
-// do Vitest da API. Nunca usar em produção.
+// Usado por `scripts/db-dev.mjs` (pnpm db:dev), `scripts/dev.mjs` (pnpm dev), pelo globalSetup
+// do Vitest da API e pelo `e2e/run.mjs` do repositório ronin-web (via RONIN_API_DIR). Essas
+// exportações (ROOT, readDevEnv, startDevDatabase) são um contrato com o ronin-web: não renomeie
+// sem ajustar lá. Nunca usar em produção.
 
 import { spawn } from 'node:child_process';
 import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync } from 'node:fs';

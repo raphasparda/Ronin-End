@@ -1,5 +1,5 @@
 packages:
-  - apps/*
+  # A API fica na raiz do repositório (projeto "."); o pacote publicável fica em packages/shared.
   - packages/*
 
 # pnpm 10 bloqueia scripts de instalação por padrão; libere aqui só o necessário.

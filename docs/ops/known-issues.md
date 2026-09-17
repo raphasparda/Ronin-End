@@ -2,7 +2,7 @@
 
 Público: Raphael e o time, rodando e testando o Ronin em desenvolvimento, e quem for preparar a Fatia 10 (deploy).
 
-Última revisão: 2026-09-17, fim da entrega das Fatias 0 a 9.
+Última revisão: 2026-09-17, fim da entrega das Fatias 0 a 9 e divisão em dois repositórios (ronin-api e ronin-web).
 
 ## 1. Node.exe fecha sozinho no Windows (exit 0xC0000409)
 
@@ -24,12 +24,15 @@ O código de saída é `0xC0000409`. No PowerShell, `$LASTEXITCODE` mostra `-107
 **Contorno.** Rode de novo o comando que falhou. Para repetir só uma parte:
 
 ```powershell
-pnpm --filter @kanban/api run test
-pnpm --filter @kanban/web run test
+# ronin-api
+pnpm --filter @raphasparda/ronin-shared run test
+pnpm test:api
+# ronin-web
+pnpm test
 pnpm test:e2e
 ```
 
-Se `pnpm dev` cair no meio do uso, pare com Ctrl+C e rode `pnpm dev` de novo. O banco é assumido e parado corretamente na próxima execução ([`setup-local.md`](setup-local.md#problemas-comuns)).
+Se o `pnpm dev` (da API ou do web) cair no meio do uso, pare com Ctrl+C e rode `pnpm dev` de novo. O banco é assumido e parado corretamente na próxima execução ([`setup-local.md`](setup-local.md#problemas-comuns)).
 
 ## 2. Decisão pendente: bloqueio de login por e-mail
 

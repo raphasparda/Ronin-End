@@ -8,6 +8,13 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/). O
 
 Entrega das Fatias 0 a 9 do MVP, na branch `feat/mvp-fatias-2-9`. A Fatia 10 (produção em VPS, backup e revisão final) ainda está pendente: veja [`docs/ops/known-issues.md`](docs/ops/known-issues.md).
 
+### Alterado
+
+- Monorepo dividido em dois repositórios, com histórico preservado ([ADR 0014](docs/architecture/adr/0014-dois-repositorios-e-shared-publicado.md)): **ronin-api** (`raphasparda/Ronin-End`: API na raiz, `packages/shared`, banco local de dev, docs de produto, arquitetura e operação) e **ronin-web** (`raphasparda/Ronin-front`: SPA, E2E e docs de design).
+- `@raphasparda/ronin-shared` 0.1.0 (antes `@kanban/shared`) publicável no GitHub Packages: build com tsup (ESM + `.d.ts`), `exports` com subpath `./test-fixtures`, workflow `publish-shared.yml` em tags `shared-v*`. Escopo igual ao dono dos repositórios no GitHub (`raphasparda`).
+- `pnpm dev` deste repositório sobe só banco, migrations e API; o web roda com `pnpm dev` no ronin-web.
+- CI da API sem o job de E2E (que passou para o ronin-web) e com verificação do conteúdo do tarball do shared.
+
 ### Adicionado
 
 #### Base e ambiente de desenvolvimento
@@ -16,7 +23,7 @@ Entrega das Fatias 0 a 9 do MVP, na branch `feat/mvp-fatias-2-9`. A Fatia 10 (pr
 - `pnpm dev` sobe um PostgreSQL local do projeto (porta 5433, sem Docker e sem admin), aplica as migrations e sobe API (3000) e web (5310).
 - Redirecionamento automático de `localhost:5310` para `127.0.0.1:5310` no servidor de desenvolvimento.
 - Documentação OpenAPI em `/api/docs` (só fora de produção).
-- Migrations versionadas em `apps/api/drizzle`.
+- Migrations versionadas em `drizzle/`.
 
 #### Equipe e acesso
 

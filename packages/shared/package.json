@@ -1,13 +1,35 @@
 {
-  "name": "@kanban/shared",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@raphasparda/ronin-shared",
+  "version": "0.1.0",
+  "description": "Contratos (schemas Zod) e regras de domínio puras do Ronin, compartilhados entre API e web.",
+  "license": "UNLICENSED",
   "type": "module",
   "sideEffects": false,
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./test-fixtures": "./src/test-fixtures.ts"
+  },
+  "types": "./src/index.ts",
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./test-fixtures": {
+        "types": "./dist/test-fixtures.d.ts",
+        "import": "./dist/test-fixtures.js"
+      }
+    },
+    "types": "./dist/index.d.ts"
   },
   "scripts": {
+    "build": "tsup",
+    "prepack": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --coverage",
     "test:watch": "vitest"
@@ -17,6 +39,7 @@
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^5.0.1",
+    "tsup": "^8.5.1",
     "typescript": "~5.9.3",
     "vitest": "^5.0.1"
   }

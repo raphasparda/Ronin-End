@@ -1,0 +1,78 @@
+# Publica @raphasparda/ronin-shared no GitHub Packages (npm.pkg.github.com).
+#
+# Disparo: push de tag `shared-v<versão>` (ex.: shared-v0.1.0), que precisa bater com o
+# `version` de packages/shared/package.json. Autenticação: GITHUB_TOKEN do próprio workflow
+# (permissão `packages: write`); não há segredo a cadastrar.
+#
+# IMPORTANTE: o GitHub Packages só aceita pacotes com escopo igual ao dono do repositório
+# (@raphasparda). Se o repositório mudar de dono, renomeie o pacote antes
+# (docs/ops/shared-package.md). Este workflow falha cedo se o escopo não bater.
+name: Publicar @raphasparda/ronin-shared
+
+on:
+  push:
+    tags: ['shared-v*']
+  workflow_dispatch:
+
+concurrency:
+  group: publish-shared-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    name: Publicar no GitHub Packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Instalar pnpm
+        uses: pnpm/action-setup@v6
+
+      # registry-url grava um .npmrc temporário com //npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}.
+      - name: Instalar Node.js (.nvmrc) apontando para o GitHub Packages
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          registry-url: https://npm.pkg.github.com
+
+      - name: Conferir escopo e versão
+        env:
+          OWNER: ${{ github.repository_owner }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          name=$(node -p "require('./packages/shared/package.json').name")
+          version=$(node -p "require('./packages/shared/package.json').version")
+          scope=${name%%/*}
+          owner_lc=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
+          if [ "$scope" != "@$owner_lc" ]; then
+            echo "::error::Escopo '$scope' diferente do dono '@$owner_lc'. Renomeie o pacote (docs/ops/shared-package.md)."
+            exit 1
+          fi
+          if [ "$REF_TYPE" = "tag" ] && [ "$REF_NAME" != "shared-v$version" ]; then
+            echo "::error::Tag '$REF_NAME' não corresponde à versão '$version' do package.json."
+            exit 1
+          fi
+          echo "Publicando $name@$version"
+
+      - name: Instalar dependências
+        run: pnpm install --frozen-lockfile
+
+      - name: Testes do shared
+        run: pnpm --filter "./packages/shared" run test
+
+      # `prepack` roda o tsup (dist/); publishConfig troca exports/types para dist/.
+      - name: Publicar
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpm --filter "./packages/shared" publish --no-git-checks

@@ -1,7 +1,6 @@
 // @ts-check
 import js from '@eslint/js';
 import prettier from 'eslint-config-prettier';
-import reactHooks from 'eslint-plugin-react-hooks';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
@@ -11,9 +10,10 @@ export default tseslint.config(
       '**/node_modules/**',
       '**/dist/**',
       '**/coverage/**',
-      '**/playwright-report/**',
-      '**/test-results/**',
-      'apps/api/drizzle/**',
+      '.data/**',
+      'drizzle/**',
+      '*.tgz',
+      '**/*.tgz',
     ],
   },
   js.configs.recommended,
@@ -36,15 +36,6 @@ export default tseslint.config(
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
       ],
     },
-  },
-  {
-    // apps/web: código de navegador (React).
-    files: ['apps/web/src/**/*.{ts,tsx}', 'apps/web/public/**/*.js'],
-    languageOptions: { globals: { ...globals.browser } },
-  },
-  {
-    files: ['apps/web/src/**/*.{ts,tsx}'],
-    ...reactHooks.configs.flat['recommended-latest'],
   },
   {
     // Arquivos JS de configuração e scripts (e seus .d.mts) não fazem parte de nenhum tsconfig.

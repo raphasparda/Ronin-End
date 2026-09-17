@@ -13,13 +13,10 @@ coverage/
 # PostgreSQL local de dev (pnpm db:dev / pnpm dev)
 .data/
 
-# Playwright
-playwright-report/
-test-results/
-blob-report/
-
 # Logs e SO
 *.log
 .DS_Store
 Thumbs.db
 
+# Tarball gerado por pnpm pack (@raphasparda/ronin-shared)
+*.tgz
