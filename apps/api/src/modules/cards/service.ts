@@ -24,17 +24,23 @@ import { listCardActivities, recordActivity } from '../activity/service';
 import { findBoardById, lockBoardsShared } from '../boards/repository';
 import { applyCompletionChange } from '../completion/service';
 import { findListById, lockListById, lockListsByIds } from '../lists/repository';
+import { onAssigned } from '../notifications/hooks';
+import { findUserById, lockUserShared } from '../users/repository';
+import { USER_NOT_FOUND_MESSAGE } from '../users/service';
 import { getWorkspace } from '../workspace/service';
 
 import {
+  deleteCardAssignee,
   deleteCardById,
   deleteForeignCardLabels,
+  findCardAssigneeIds,
   findCardAssigneePairs,
   findCardById,
   findCardChecklists,
   findCardComments,
   findCardLabelPairs,
   findCardSummaryRows,
+  insertCardAssignee,
   insertCardRow,
   lockCardById,
   updateCardById,
@@ -49,6 +55,8 @@ export const CARD_LIST_ARCHIVED_MESSAGE = 'Esta lista está arquivada.';
 export const LIST_IS_DONE_LIST_MESSAGE =
   'Não é possível criar card direto na lista de conclusão. Crie em outra lista e mova para cá.';
 export const CARD_ARCHIVED_MOVE_MESSAGE = 'Este card está arquivado. Restaure-o antes de mover.';
+export const USER_NOT_ACTIVE_ASSIGN_MESSAGE =
+  'Esta pessoa está desativada e não pode ser atribuída ao card.';
 
 /** Contexto de quem executa a ação. */
 export interface CardActionContext {
@@ -243,7 +251,10 @@ class CardMovedConcurrently extends Error {
 const MAX_LOCK_ATTEMPTS = 5;
 
 /** `db.transaction` que refaz a transação quando o card muda de lista durante o lock. */
-async function cardTransaction<T>(db: Database, fn: (tx: DbExecutor) => Promise<T>): Promise<T> {
+export async function cardTransaction<T>(
+  db: Database,
+  fn: (tx: DbExecutor) => Promise<T>,
+): Promise<T> {
   for (let attempt = 1; ; attempt++) {
     try {
       return await db.transaction(fn);
@@ -254,7 +265,7 @@ async function cardTransaction<T>(db: Database, fn: (tx: DbExecutor) => Promise<
   }
 }
 
-interface LockedCard {
+export interface LockedCard {
   card: CardRow;
   boards: Map<string, BoardRow>;
   lists: Map<string, ListRow>;
@@ -267,7 +278,7 @@ interface LockedCard {
  * Card inexistente (ou excluído no meio) → 404. Se o card mudou de lista/quadro entre a leitura
  * e o lock, lança `CardMovedConcurrently` (a transação é refeita por `cardTransaction`).
  */
-async function lockCard(
+export async function lockCard(
   tx: DbExecutor,
   cardId: string,
   options: { lockLists: boolean; extraBoardIds?: string[]; extraListIds?: string[] },
@@ -295,7 +306,7 @@ async function lockCard(
   return { card, boards, lists };
 }
 
-function assertBoardWritable(board: BoardRow | undefined): BoardRow {
+export function assertBoardWritable(board: BoardRow | undefined): BoardRow {
   if (!board) throw notFound();
   if (board.archivedAt !== null) throw boardArchived();
   return board;
@@ -586,5 +597,86 @@ export async function deleteCard(
     if (actor.role !== 'admin') throw new AppError('FORBIDDEN', FORBIDDEN_MESSAGE);
     assertBoardWritable(boards.get(card.boardId));
     await deleteCardById(tx, card.id);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Responsáveis (C4)
+// ---------------------------------------------------------------------------
+
+/**
+ * `PUT /api/cards/:cardId/assignees/:userId` (api.md §11). Ordem: 404 (card, usuário) →
+ * `409 BOARD_ARCHIVED` → `409 USER_NOT_ACTIVE`. Card arquivado é aceito (como no `PATCH`).
+ * Atribuição nova: atividade `card_assignee_added` e gancho `onAssigned` (notificação na Fatia 7).
+ * Já atribuído: 200 sem atividade (idempotente), inclusive se o usuário foi desativado depois.
+ * O usuário fica com lock `FOR SHARE` até o fim, então desativar em paralelo não "fura" a regra.
+ */
+export async function assignCard(
+  db: Database,
+  ctx: CardActionContext,
+  cardId: string,
+  userId: string,
+): Promise<string[]> {
+  return cardTransaction(db, async (tx) => {
+    const { card, boards } = await lockCard(tx, cardId, { lockLists: false });
+    if (!(await findUserById(tx, userId))) throw new AppError('NOT_FOUND', USER_NOT_FOUND_MESSAGE);
+    assertBoardWritable(boards.get(card.boardId));
+
+    const current = await findCardAssigneeIds(tx, card.id);
+    if (current.includes(userId)) return current;
+
+    const user = await lockUserShared(tx, userId);
+    if (!user) throw new AppError('NOT_FOUND', USER_NOT_FOUND_MESSAGE);
+    if (user.status !== 'active' || user.anonymizedAt !== null) {
+      throw new AppError('USER_NOT_ACTIVE', USER_NOT_ACTIVE_ASSIGN_MESSAGE);
+    }
+
+    const inserted = await insertCardAssignee(tx, {
+      cardId: card.id,
+      userId,
+      assignedBy: ctx.actorId,
+      now: ctx.now,
+    });
+    if (inserted) {
+      await recordActivity(tx, {
+        cardId: card.id,
+        boardId: card.boardId,
+        actorId: ctx.actorId,
+        now: ctx.now,
+        type: 'card_assignee_added',
+        data: { userId },
+      });
+      await onAssigned(tx, { cardId: card.id, userId, actorId: ctx.actorId, now: ctx.now });
+    }
+    return findCardAssigneeIds(tx, card.id);
+  });
+}
+
+/**
+ * `DELETE /api/cards/:cardId/assignees/:userId`: remove (qualquer status de usuário). Ordem: 404
+ * (card, usuário) → `409 BOARD_ARCHIVED`. Se existia: `card_assignee_removed`. Idempotente.
+ */
+export async function unassignCard(
+  db: Database,
+  ctx: CardActionContext,
+  cardId: string,
+  userId: string,
+): Promise<string[]> {
+  return cardTransaction(db, async (tx) => {
+    const { card, boards } = await lockCard(tx, cardId, { lockLists: false });
+    if (!(await findUserById(tx, userId))) throw new AppError('NOT_FOUND', USER_NOT_FOUND_MESSAGE);
+    assertBoardWritable(boards.get(card.boardId));
+
+    if (await deleteCardAssignee(tx, card.id, userId)) {
+      await recordActivity(tx, {
+        cardId: card.id,
+        boardId: card.boardId,
+        actorId: ctx.actorId,
+        now: ctx.now,
+        type: 'card_assignee_removed',
+        data: { userId },
+      });
+    }
+    return findCardAssigneeIds(tx, card.id);
   });
 }

@@ -82,3 +82,12 @@ export async function updateActiveUserPassword(
     .returning({ id: users.id });
   return rows.length > 0;
 }
+
+/**
+ * Usuário com lock compartilhado (`FOR SHARE`): impede que desativar/anonimizar (`UPDATE`) termine
+ * no meio de uma ação que depende do status (ex.: atribuir responsável).
+ */
+export async function lockUserShared(db: DbExecutor, id: string): Promise<UserRow | undefined> {
+  const [row] = await db.select().from(users).where(eq(users.id, id)).limit(1).for('share');
+  return row;
+}

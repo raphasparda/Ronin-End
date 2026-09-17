@@ -27,8 +27,11 @@ import { adminRoutes } from './modules/admin/routes';
 import { authRoutes } from './modules/auth/routes';
 import { boardRoutes } from './modules/boards/routes';
 import { cardRoutes } from './modules/cards/routes';
+import { checklistRoutes } from './modules/checklists/routes';
+import { commentRoutes } from './modules/comments/routes';
 import { healthRoutes } from './modules/health/routes';
 import { inviteRoutes } from './modules/invites/routes';
+import { labelRoutes } from './modules/labels/routes';
 import { listRoutes } from './modules/lists/routes';
 import { meRoutes } from './modules/me/routes';
 import { passwordResetRoutes } from './modules/password-resets/routes';
@@ -132,6 +135,9 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   await app.register(boardRoutes);
   await app.register(listRoutes);
   await app.register(cardRoutes);
+  await app.register(labelRoutes);
+  await app.register(checklistRoutes);
+  await app.register(commentRoutes);
 
   return app;
 }

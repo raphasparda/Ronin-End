@@ -1,5 +1,7 @@
 import {
   activitiesResponseSchema,
+  cardAssigneeParamsSchema,
+  cardAssigneesResponseSchema,
   cardDetailResponseSchema,
   cardIdParamsSchema,
   cardMutationResultSchema,
@@ -18,12 +20,14 @@ import { requireUser } from '../../plugins/session';
 
 import {
   archiveCard,
+  assignCard,
   createCard,
   deleteCard,
   getCardActivity,
   getCardDetail,
   moveCard,
   restoreCard,
+  unassignCard,
   updateCard,
   type CardActionContext,
 } from './service';
@@ -161,6 +165,46 @@ export const cardRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
       },
     },
     async (request) => ({ activities: await getCardActivity(app.db, request.params.cardId) }),
+  );
+
+  app.put(
+    '/api/cards/:cardId/assignees/:userId',
+    {
+      schema: {
+        tags: ['cards'],
+        summary: 'Adiciona responsável (idempotente; usuário não ativo → 409 USER_NOT_ACTIVE)',
+        params: cardAssigneeParamsSchema,
+        response: { 200: cardAssigneesResponseSchema, ...errorResponses(400, 401, 403, 404, 409) },
+      },
+    },
+    async (request) => ({
+      assigneeIds: await assignCard(
+        app.db,
+        actionContext(app, request),
+        request.params.cardId,
+        request.params.userId,
+      ),
+    }),
+  );
+
+  app.delete(
+    '/api/cards/:cardId/assignees/:userId',
+    {
+      schema: {
+        tags: ['cards'],
+        summary: 'Remove responsável (idempotente; qualquer status de usuário)',
+        params: cardAssigneeParamsSchema,
+        response: { 200: cardAssigneesResponseSchema, ...errorResponses(400, 401, 403, 404, 409) },
+      },
+    },
+    async (request) => ({
+      assigneeIds: await unassignCard(
+        app.db,
+        actionContext(app, request),
+        request.params.cardId,
+        request.params.userId,
+      ),
+    }),
   );
 
   done();

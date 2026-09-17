@@ -1,6 +1,6 @@
 # Kanban: contrato da API REST (MVP)
 
-> Status: v1.6 (2026-09-17; v1.2 alinhou ao `scope.md` v2: sem gamificação, cor por lista, prioridade do card, reabrir para o topo; v1.3 adicionou `415 UNSUPPORTED_MEDIA_TYPE`; v1.4 (2026-09-17) fechou ambiguidades ao implementar os schemas das Fatias 2 a 9, ver §18; v1.5 registrou decisões do backend das Fatias 2 e 3, §18.1; v1.6 registrou decisões do backend da Fatia 4, §18.2). Complementa `overview.md`. Os schemas Zod em `packages/shared/src/schemas/` são a fonte da verdade em código e devem refletir exatamente este documento. Mudança de contrato = atualizar este arquivo no mesmo PR.
+> Status: v1.7 (2026-09-17; v1.2 alinhou ao `scope.md` v2: sem gamificação, cor por lista, prioridade do card, reabrir para o topo; v1.3 adicionou `415 UNSUPPORTED_MEDIA_TYPE`; v1.4 (2026-09-17) fechou ambiguidades ao implementar os schemas das Fatias 2 a 9, ver §18; v1.5 registrou decisões do backend das Fatias 2 e 3, §18.1; v1.6 registrou decisões do backend da Fatia 4, §18.2; v1.7 registrou decisões do backend das Fatias 5 e 6, §18.3). Complementa `overview.md`. Os schemas Zod em `packages/shared/src/schemas/` são a fonte da verdade em código e devem refletir exatamente este documento. Mudança de contrato = atualizar este arquivo no mesmo PR.
 
 ## 1. Convenções
 
@@ -273,7 +273,7 @@ Payload do quadro (arquivado também pode ser lido):
   labels: Label[];        // por name
 }
 ```
-Implementação: 5 consultas (board, lists, cards com agregados `checklist`/`commentCount` via subconsultas agrupadas, `card_labels` do quadro, `card_assignees` do quadro). Sem N+1.
+Implementação: 6 consultas (board, lists, cards com agregados `checklist`/`commentCount` via subconsultas agrupadas, `card_labels` do quadro, `card_assignees` do quadro, labels). Sem N+1 (§18.3, item 31).
 
 ### `PATCH /api/boards/:boardId` · Auth
 Body `{ name }`. `BOARD_ARCHIVED` se arquivado. 200 `{ board }`.
@@ -488,3 +488,17 @@ Nenhuma muda schema.
 22. **`DELETE /api/cards/:cardId`**: 404 → 403 (Member) → `409 BOARD_ARCHIVED` (quadro arquivado é somente leitura, I10; a exceção de §3 vale só para excluir o **quadro**).
 23. **`removedLabelIds`** vem ordenado por id. Responsáveis permanecem no move entre quadros.
 24. **Locks das mutações de card**: quadros envolvidos `FOR SHARE` (por id) → listas envolvidas `FOR UPDATE` (por id) → card `FOR UPDATE`. Arquivar/excluir o quadro (`FOR UPDATE`) espera a ação terminar; cards do mesmo quadro só se serializam pelas listas. Se o card mudou de lista entre a leitura e o lock, a transação é refeita (até 5 vezes).
+
+### 18.3 Decisões fechadas na implementação do backend das Fatias 5 e 6 (v1.7)
+
+Nenhuma muda schema.
+
+25. **Responsáveis** (`PUT|DELETE /api/cards/:cardId/assignees/:userId`): ordem 400 → 404 (card, depois usuário) → `409 BOARD_ARCHIVED` → `409 USER_NOT_ACTIVE` (só no `PUT`; anonimizado também é `USER_NOT_ACTIVE`). Usuário já atribuído → 200 sem atividade, mesmo que tenha sido desativado depois. `DELETE` com usuário inexistente → 404. `assigneeIds` por ordem de atribuição. Atividades: `card_assignee_added`/`card_assignee_removed` com `{ userId }`, só quando algo muda.
+26. **Etiquetas**: nomes não são únicos no quadro. `POST /api/boards/:boardId/labels`, `PATCH` e `DELETE /api/labels/:labelId`: 404 → `409 BOARD_ARCHIVED`; valores iguais no `PATCH` → 200 sem gravar. Etiquetas não geram atividade.
+27. **Etiqueta no card**: ordem 400 → 404 (card, depois etiqueta) → `409 BOARD_ARCHIVED` → `409 LABEL_BOARD_MISMATCH` (só no `PUT`). `DELETE` de etiqueta de outro quadro → 200 no-op com os `labelIds` atuais. `labelIds` por nome da etiqueta.
+28. **Card arquivado** aceita responsáveis, etiquetas, checklists/itens e comentários (como o `PATCH` do card, item 21); só quadro arquivado → 409.
+29. **Checklists e itens**: toda mutação 400 → 404 → `409 BOARD_ARCHIVED` (→ `409 INVALID_PLACEMENT` no `move`: `after` de outro checklist, inexistente ou o próprio item). Marcar item já marcado mantém `checkedBy`/`checkedAt` originais; desmarcar limpa os dois. Valores iguais → 200 sem gravar. Nenhuma ação de checklist gera atividade ou muda o status do card. Checklists no detalhe: `createdAt`, depois `id`.
+30. **Comentários**: `PATCH`/`DELETE` na ordem 400 → 404 → 403 → `409 BOARD_ARCHIVED` (não autor recebe 403 mesmo em quadro arquivado). `PATCH` com o mesmo corpo (após `trim`) → 200 sem alterar `editedAt`. O corpo é guardado como texto Markdown cru (só `trim`), sem sanitizar nem gerar HTML (ADR 0007).
+31. **Payload do quadro**: 6 consultas (o §9 listava 5 e omitia `labels`); teste garante que o número não cresce com cards, etiquetas e responsáveis.
+32. **Ganchos de notificação**: `onAssigned` (atribuição nova) e `onCommented` (comentário novo) em `apps/api/src/modules/notifications/hooks.ts`, chamados na transação da ação e hoje sem efeito. A tarefa 7.3 aplica lá a regra de não autonotificar e só destinatários ativos.
+33. **Locks**: quadro `FOR SHARE` → card `FOR UPDATE` → checklist → item / comentário (`FOR UPDATE`). Atribuir bloqueia o usuário alvo `FOR SHARE` (desativar em paralelo espera). Criar/editar/excluir etiqueta: quadro `FOR SHARE` → etiqueta `FOR UPDATE`.

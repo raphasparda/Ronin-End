@@ -253,3 +253,79 @@ export async function findCardComments(db: DbExecutor, cardId: string): Promise<
     .where(eq(comments.cardId, cardId))
     .orderBy(asc(comments.createdAt), asc(comments.id));
 }
+
+// ---------------------------------------------------------------------------
+// Responsáveis (C4) e etiquetas aplicadas (C6)
+// ---------------------------------------------------------------------------
+
+/** Responsáveis de um card, por ordem de atribuição (mesma ordem do payload do quadro). */
+export async function findCardAssigneeIds(db: DbExecutor, cardId: string): Promise<string[]> {
+  const rows = await db
+    .select({ userId: cardAssignees.userId })
+    .from(cardAssignees)
+    .where(eq(cardAssignees.cardId, cardId))
+    .orderBy(asc(cardAssignees.createdAt), asc(cardAssignees.userId));
+  return rows.map((row) => row.userId);
+}
+
+/** Atribui; `true` se a atribuição é nova (`ON CONFLICT DO NOTHING` na PK). */
+export async function insertCardAssignee(
+  db: DbExecutor,
+  values: { cardId: string; userId: string; assignedBy: string; now: Date },
+): Promise<boolean> {
+  const rows = await db
+    .insert(cardAssignees)
+    .values({
+      cardId: values.cardId,
+      userId: values.userId,
+      assignedBy: values.assignedBy,
+      createdAt: values.now,
+    })
+    .onConflictDoNothing()
+    .returning({ userId: cardAssignees.userId });
+  return rows.length > 0;
+}
+
+/** Remove a atribuição; `true` se existia. */
+export async function deleteCardAssignee(
+  db: DbExecutor,
+  cardId: string,
+  userId: string,
+): Promise<boolean> {
+  const rows = await db
+    .delete(cardAssignees)
+    .where(and(eq(cardAssignees.cardId, cardId), eq(cardAssignees.userId, userId)))
+    .returning({ userId: cardAssignees.userId });
+  return rows.length > 0;
+}
+
+/** Etiquetas aplicadas a um card, por nome da etiqueta (mesma ordem do payload do quadro). */
+export async function findCardLabelIds(db: DbExecutor, cardId: string): Promise<string[]> {
+  const rows = await db
+    .select({ labelId: cardLabels.labelId })
+    .from(cardLabels)
+    .innerJoin(labels, eq(labels.id, cardLabels.labelId))
+    .where(eq(cardLabels.cardId, cardId))
+    .orderBy(asc(labels.name), asc(labels.id));
+  return rows.map((row) => row.labelId);
+}
+
+/** Aplica a etiqueta ao card (idempotente). */
+export async function insertCardLabel(
+  db: DbExecutor,
+  cardId: string,
+  labelId: string,
+): Promise<void> {
+  await db.insert(cardLabels).values({ cardId, labelId }).onConflictDoNothing();
+}
+
+/** Remove a etiqueta do card (idempotente). */
+export async function deleteCardLabel(
+  db: DbExecutor,
+  cardId: string,
+  labelId: string,
+): Promise<void> {
+  await db
+    .delete(cardLabels)
+    .where(and(eq(cardLabels.cardId, cardId), eq(cardLabels.labelId, labelId)));
+}
