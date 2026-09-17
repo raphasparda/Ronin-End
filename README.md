@@ -235,7 +235,7 @@ docs/              produto, arquitetura (ADRs) e operação
 
 O caminho de baixo custo é o **Render** (Web Service Free para a API, Static Site para o front com rewrite de `/api/*`, mesma origem) com PostgreSQL no **Neon**. O [`render.yaml`](render.yaml) documenta o serviço da API; o passo a passo, as variáveis, o `SETUP_TOKEN` do primeiro acesso e os limites do plano gratuito estão em [`docs/ops/deploy-render.md`](docs/ops/deploy-render.md).
 
-Resumo: build `corepack enable && pnpm install --frozen-lockfile && pnpm build`, start `pnpm start:prod` (migrations e servidor), health check `/api/health`. Em produção a API não sobe sem `APP_ORIGIN` em `https://` e sem `SETUP_TOKEN`.
+Resumo: build `pnpm install --frozen-lockfile && pnpm build`, start `node dist/migrate.js && node --enable-source-maps dist/server.js` (migrations e servidor), health check `/api/health`. Em produção a API não sobe sem `APP_ORIGIN` em `https://` e sem `SETUP_TOKEN`.
 
 ## Documentação e API
 

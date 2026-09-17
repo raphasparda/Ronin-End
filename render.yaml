@@ -9,9 +9,9 @@ services:
     runtime: node
     plan: free
     region: virginia
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    buildCommand: pnpm install --frozen-lockfile && pnpm build
     # Aplica as migrations (dist/migrate.js) e sobe a API; se a migration falhar, a API não sobe.
-    startCommand: pnpm start:prod
+    startCommand: node dist/migrate.js && node --enable-source-maps dist/server.js
     healthCheckPath: /api/health
     envVars:
       - key: NODE_VERSION

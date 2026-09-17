@@ -89,8 +89,8 @@ Depois do setup, o código não abre mais nada (o setup responde `409 SETUP_ALRE
 
 | Etapa | Comando | O que faz |
 | ----- | ------- | --------- |
-| Build | `corepack enable && pnpm install --frozen-lockfile && pnpm build` | ativa o pnpm da versão do `packageManager`, instala exatamente o lockfile (inclui as devDependencies, necessárias para o `tsup`) e gera `dist/server.js` e `dist/migrate.js` |
-| Start | `pnpm start:prod` | `node dist/migrate.js && node --enable-source-maps dist/server.js` |
+| Build | `pnpm install --frozen-lockfile && pnpm build` | usa o pnpm que já vem na imagem do Render (o `corepack enable` falha lá: `/usr/bin` é somente leitura), instala exatamente o lockfile (inclui as devDependencies, necessárias para o `tsup`) e gera `dist/server.js` e `dist/migrate.js` |
+| Start | `node dist/migrate.js && node --enable-source-maps dist/server.js` | mesmo que `pnpm start:prod`, sem depender do pnpm em runtime |
 | Health check | `GET /api/health` | `200 { status: "ok", db: "ok" }`; `503` se o banco não responder em 3 s |
 
 - `dist/migrate.js` aplica as migrations de `drizzle/` (relativo ao diretório atual, a raiz do repositório no Render; `MIGRATIONS_DIR` muda a pasta). É idempotente e usa advisory lock, então roda em todo start sem risco. Se falhar, o `&&` impede a API de subir e o deploy aparece como falho.
