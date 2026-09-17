@@ -38,7 +38,7 @@ Nada além disso: sem etiquetas, responsáveis, prazo, prioridade, contadores, d
 
 `GET /api/me/cards` e as notificações **filtram** (não bloqueiam): um card que a pessoa não pode abrir não serve como item de trabalho nem como aviso.
 
-**Manutenção da lista de acesso.** `PUT /api/cards/:cardId/visibility` e `PUT|DELETE /api/cards/:cardId/viewers/:userId`, disponíveis para quem tem acesso ao card (RN05 continua valendo dentro do círculo de acesso). Ao restringir, o ator e os responsáveis atuais viram viewers na mesma transação; atribuir alguém a um card restrito também o torna viewer. Voltar para `team` apaga as linhas de `card_viewers`.
+**Manutenção da lista de acesso.** `PUT /api/cards/:cardId/visibility` e `PUT|DELETE /api/cards/:cardId/viewers/:userId`, disponíveis para quem tem acesso ao card (RN05 continua valendo dentro do círculo de acesso). Ao restringir, o ator e os responsáveis atuais viram viewers na mesma transação; atribuir alguém a um card restrito também o torna viewer. (Nota de 2026-09-17, na implementação: a lista inicial inclui também o **criador do card**, como manda a RN30 do `scope.md`; ver `api.md` §11 e §18.8 item 62.) Voltar para `team` apaga as linhas de `card_viewers`.
 
 ## Alternativas
 

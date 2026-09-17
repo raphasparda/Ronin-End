@@ -21,6 +21,7 @@ import * as schema from '../../db/schema';
 import { cardActivities, cardCovers, cards, cardViewers } from '../../db/schema';
 import { R2Error, type R2Client, type R2ListResult } from '../../lib/r2';
 import { runMaintenance } from '../../plugins/maintenance';
+import { COVER_UPLOAD_URL_RATE_LIMIT } from '../../plugins/rate-limit';
 import { getBoardPayload } from '../boards/service';
 
 import { clearCoverUrlCache, COVER_ORPHAN_MIN_AGE_MS, COVER_READ_WINDOW_MS } from './cover';
@@ -315,6 +316,25 @@ describeDb('capa do card (kanban_test)', () => {
         403,
         'CARD_RESTRICTED',
       );
+    });
+
+    it('limite de 30 pedidos / 5 min por usuário (api.md §11)', async () => {
+      const { todo } = await newBoard();
+      const card = await newCard(todo);
+      for (let i = 0; i < COVER_UPLOAD_URL_RATE_LIMIT.max; i++) {
+        expect((await uploadUrl(card.id)).statusCode).toBe(200);
+      }
+      const blocked = await uploadUrl(card.id);
+      expectError(blocked, 429, 'RATE_LIMITED');
+      expect(Number(blocked.headers['retry-after'])).toBeGreaterThan(0);
+      // O limite é por usuário: outra pessoa continua pedindo normalmente.
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/cards/${card.id}/cover/upload-url`,
+        headers: outsider.headers,
+        payload: { contentType: 'image/png', sizeBytes: 14 },
+      });
+      expect(res.statusCode).toBe(200);
     });
 
     it('R2 fora do ar não derruba a rota de URL (assinar é local)', async () => {

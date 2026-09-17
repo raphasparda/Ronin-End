@@ -122,7 +122,7 @@ describeDb('visibilidade e lista de acesso do card (kanban_test)', () => {
   }
 
   describe('PUT /api/cards/:cardId/visibility', () => {
-    it('restringir inclui o ator e os responsáveis atuais, com atividade', async () => {
+    it('restringir inclui o ator (que aqui também é o criador) e os responsáveis, com atividade', async () => {
       const { todo } = await newBoard();
       const card = await newCard(todo, 'Proposta');
       expect(
@@ -146,6 +146,48 @@ describeDb('visibilidade e lista de acesso do card (kanban_test)', () => {
       // Idempotente: mesmo valor não gera atividade nova.
       expect((await setVisibility(card.id, 'restricted')).statusCode).toBe(200);
       expect(await activityTypes(card.id)).toHaveLength(5);
+    });
+
+    it('criador entra na lista mesmo sem ser o ator nem responsável (RN30)', async () => {
+      const { todo } = await newBoard(); // card criado por `owner`
+      const card = await newCard(todo, 'Proposta');
+      await assign(card.id, other.user.id);
+
+      // Quem restringe é o Admin: nem criador, nem responsável.
+      const res = await setVisibility(card.id, 'restricted', admin);
+      expect(res.statusCode).toBe(200);
+      const body = cardDetailResponseSchema.parse(res.json()).card;
+      expect(sorted(body.viewerIds)).toEqual(sorted([admin.user.id, owner.user.id, other.user.id]));
+      expect(await activityTypes(card.id)).toEqual([
+        'card_created',
+        'card_assignee_added',
+        'card_visibility_changed',
+        'card_viewer_added',
+        'card_viewer_added',
+        'card_viewer_added',
+      ]);
+      // O criador continua abrindo o card que ele mesmo criou.
+      expect((await detail(card.id, owner)).id).toBe(card.id);
+    });
+
+    it('criador anonimizado não entra na lista (RN38)', async () => {
+      const { todo } = await newBoard(); // criado por `owner`
+      const card = await newCard(todo, 'Proposta');
+      await db()
+        .update(users)
+        .set({
+          status: 'deactivated',
+          anonymizedAt: clock.now(),
+          email: null,
+          passwordHash: null,
+          name: 'Usuário removido',
+        })
+        .where(eq(users.id, owner.user.id));
+
+      const body = cardDetailResponseSchema.parse(
+        (await setVisibility(card.id, 'restricted', admin)).json(),
+      ).card;
+      expect(body.viewerIds).toEqual([admin.user.id]);
     });
 
     it('voltar para team esvazia a lista de acesso e todos abrem de novo', async () => {

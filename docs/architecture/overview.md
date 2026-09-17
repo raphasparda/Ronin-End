@@ -295,7 +295,7 @@ Um único serviço `completion.service` aplica transições. Tudo roda na mesma 
 
 | Ação | Efeito na lista de acesso |
 |------|---------------------------|
-| `PUT /cards/:id/visibility { visibility: 'restricted' }` | ator e responsáveis atuais viram viewers (atividade `card_visibility_changed` + `card_viewer_added` por pessoa nova) |
+| `PUT /cards/:id/visibility { visibility: 'restricted' }` | ator, criador do card e responsáveis atuais viram viewers (RN30; atividade `card_visibility_changed` + `card_viewer_added` por pessoa nova). Criador anonimizado fica de fora (RN38) |
 | `PUT /cards/:id/visibility { visibility: 'team' }` | apaga `card_viewers` do card; atividade `card_visibility_changed` |
 | `PUT /cards/:id/assignees/:userId` em card restrito | atribuição nova também insere o viewer (responsável sempre enxerga o card) |
 | `DELETE /cards/:id/assignees/:userId` | **não** remove o acesso (só a remoção explícita do viewer remove) |

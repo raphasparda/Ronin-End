@@ -953,8 +953,8 @@ export async function unassignCard(
 
 /**
  * `PUT /api/cards/:cardId/visibility { visibility }` (api.md §11). Idempotente.
- * - `restricted`: o **ator** e os **responsáveis atuais** entram na lista de acesso na mesma
- *   transação (cada inclusão nova gera `card_viewer_added`);
+ * - `restricted`: o **ator**, o **criador do card** e os **responsáveis atuais** entram na lista de
+ *   acesso na mesma transação (RN30; cada inclusão nova gera `card_viewer_added`);
  * - `team`: a lista é apagada (`viewerIds` volta a `[]`, sem atividade por pessoa).
  * Ordem: 400 → 404 → `403 CARD_RESTRICTED` → `409 BOARD_ARCHIVED`. Card arquivado é aceito.
  */
@@ -979,8 +979,17 @@ export async function setCardVisibility(
     });
 
     if (visibility === 'restricted') {
+      // RN30: a lista inicial é o ator + o criador do card + os responsáveis atuais — as pessoas
+      // que já viram o card e têm contexto. Criador anonimizado fica de fora (RN38: conta
+      // anonimizada não entra em lista de acesso).
       const assignees = await findCardAssigneeIds(tx, card.id);
-      for (const userId of [ctx.actor.id, ...assignees]) {
+      const creator = await findUserById(tx, card.createdBy);
+      const initial = [
+        ctx.actor.id,
+        ...(creator && creator.anonymizedAt === null ? [creator.id] : []),
+        ...assignees,
+      ];
+      for (const userId of initial) {
         const added = await insertCardViewer(tx, {
           cardId: card.id,
           userId,
