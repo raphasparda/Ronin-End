@@ -1,14 +1,18 @@
 import {
+  completeTargetListId,
   completionChangeOnMove,
   completionChangeOnRestore,
+  reopenTargetListId,
   type Activity,
   type ArchivedCard,
   type CardDetail,
   type CardMutationResult,
   type CardSummary,
   type Checklist,
+  type CompletionChange,
   type Comment,
   type MoveCardRequest,
+  type MyCard,
   type Role,
   type UpdateCardRequest,
 } from '@kanban/shared';
@@ -23,7 +27,7 @@ import { FORBIDDEN_MESSAGE } from '../../plugins/session';
 import { listCardActivities, recordActivity } from '../activity/service';
 import { findBoardById, lockBoardsShared } from '../boards/repository';
 import { applyCompletionChange } from '../completion/service';
-import { findListById, lockListById, lockListsByIds } from '../lists/repository';
+import { findActiveLists, findListById, lockListById, lockListsByIds } from '../lists/repository';
 import { onAssigned } from '../notifications/hooks';
 import { findUserById, lockUserShared } from '../users/repository';
 import { USER_NOT_FOUND_MESSAGE } from '../users/service';
@@ -55,6 +59,8 @@ export const CARD_LIST_ARCHIVED_MESSAGE = 'Esta lista está arquivada.';
 export const LIST_IS_DONE_LIST_MESSAGE =
   'Não é possível criar card direto na lista de conclusão. Crie em outra lista e mova para cá.';
 export const CARD_ARCHIVED_MOVE_MESSAGE = 'Este card está arquivado. Restaure-o antes de mover.';
+export const CARD_ARCHIVED_COMPLETION_MESSAGE =
+  'Este card está arquivado. Restaure-o antes de concluir ou reabrir.';
 export const USER_NOT_ACTIVE_ASSIGN_MESSAGE =
   'Esta pessoa está desativada e não pode ser atribuída ao card.';
 
@@ -138,6 +144,24 @@ export async function loadArchivedCards(db: DbExecutor, boardId: string): Promis
     listName: row.listName,
     listArchived: row.listArchived,
   }));
+}
+
+/**
+ * `GET /api/me/cards` (D1): cards abertos, não arquivados, em lista e quadro não arquivados,
+ * atribuídos ao usuário. Ordem: `dueAt ASC NULLS LAST`, prioridade (Urgente → sem), `createdAt`.
+ * Três consultas (faces, etiquetas, responsáveis) num snapshot único.
+ */
+export async function getMyCards(db: Database, userId: string): Promise<MyCard[]> {
+  return db.transaction(
+    async (tx) =>
+      (await loadSummaries(tx, { assigneeId: userId })).map(({ row, card }) => ({
+        ...card,
+        boardName: row.boardName,
+        listName: row.listName,
+        listColor: row.listColor,
+      })),
+    { isolationLevel: 'repeatable read', accessMode: 'read only' },
+  );
 }
 
 /** Face de um card (arquivado ou não). */
@@ -509,6 +533,118 @@ export async function moveCard(
       card: await loadCardSummary(tx, card.id),
       completionChange,
       removedLabelIds,
+    };
+  });
+}
+
+/**
+ * Lista de destino de `complete`/`reopen` (ADR 0010) a partir das listas ativas do quadro, ou
+ * `null` se o card fica onde está.
+ */
+async function completionTargetListId(
+  tx: DbExecutor,
+  card: Pick<CardRow, 'boardId' | 'listId'>,
+  change: CompletionChange,
+): Promise<string | null> {
+  const refs = (await findActiveLists(tx, card.boardId)).map((list) => ({
+    id: list.id,
+    isDoneList: list.isDoneList,
+    position: list.position,
+  }));
+  return change === 'completed' ? completeTargetListId(card, refs) : reopenTargetListId(card, refs);
+}
+
+/**
+ * `POST /api/cards/:cardId/complete` e `POST /api/cards/:cardId/reopen` (api.md §11, ADR 0010).
+ * - `complete` de card aberto: conclui e, se o quadro tem lista de conclusão e o card não está nela,
+ *   move para o **fim** dela;
+ * - `reopen` de card concluído: reabre e, se o card está na lista de conclusão, move para o **topo**
+ *   da primeira lista ativa não-conclusão (se houver);
+ * - já no estado pedido: 200 no-op (`completionChange: null`).
+ * Ordem: 404 → `409 BOARD_ARCHIVED` → `409 CONFLICT` (card arquivado, mesmo se no-op).
+ * Atividades: `card_moved` (se mudou de lista) antes de `card_completed`/`card_reopened`.
+ * Locks: quadro `FOR SHARE` → listas de origem e destino `FOR UPDATE` → card `FOR UPDATE`. O destino
+ * é calculado antes dos locks e conferido depois (as listas só mudam com o quadro `FOR UPDATE`);
+ * se mudou, a transação é refeita.
+ */
+export async function changeCardCompletion(
+  db: Database,
+  ctx: CardActionContext,
+  cardId: string,
+  change: CompletionChange,
+): Promise<CardMutationResult> {
+  return cardTransaction(db, async (tx) => {
+    const unlocked = await findCardById(tx, cardId);
+    if (!unlocked) throw notFound();
+    const plannedTarget = await completionTargetListId(tx, unlocked, change);
+
+    const { card, boards, lists } = await lockCard(tx, cardId, {
+      lockLists: true,
+      extraListIds: plannedTarget === null ? [] : [plannedTarget],
+    });
+    const board = assertBoardWritable(boards.get(card.boardId));
+    if (card.archivedAt !== null) {
+      throw new AppError('CONFLICT', CARD_ARCHIVED_COMPLETION_MESSAGE);
+    }
+
+    const expected = change === 'completed' ? 'open' : 'completed';
+    if (card.status !== expected) {
+      return {
+        card: await loadCardSummary(tx, card.id),
+        completionChange: null,
+        removedLabelIds: [],
+      };
+    }
+
+    const target = await completionTargetListId(tx, card, change);
+    if (target !== plannedTarget) throw new CardMovedConcurrently();
+
+    let current: CardRow = card;
+    if (target !== null) {
+      const source = lists.get(card.listId);
+      const destination = lists.get(target);
+      if (!source || !destination) throw new CardMovedConcurrently();
+      const position = await computePosition(
+        tx,
+        CARD_SIBLINGS,
+        destination.id,
+        { type: change === 'completed' ? 'end' : 'start' },
+        card.id,
+      );
+      current = await updateCardById(tx, card.id, {
+        listId: destination.id,
+        position,
+        updatedAt: ctx.now,
+      });
+      await recordActivity(tx, {
+        cardId: card.id,
+        boardId: card.boardId,
+        actorId: ctx.actorId,
+        now: ctx.now,
+        type: 'card_moved',
+        data: {
+          fromListId: source.id,
+          fromListName: source.name,
+          toListId: destination.id,
+          toListName: destination.name,
+          fromBoardId: board.id,
+          fromBoardName: board.name,
+          toBoardId: board.id,
+          toBoardName: board.name,
+        },
+      });
+    }
+
+    await applyCompletionChange(tx, {
+      card: current,
+      change,
+      actorId: ctx.actorId,
+      now: ctx.now,
+    });
+    return {
+      card: await loadCardSummary(tx, card.id),
+      completionChange: change,
+      removedLabelIds: [],
     };
   });
 }

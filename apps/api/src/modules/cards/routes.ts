@@ -21,6 +21,7 @@ import { requireUser } from '../../plugins/session';
 import {
   archiveCard,
   assignCard,
+  changeCardCompletion,
   createCard,
   deleteCard,
   getCardActivity,
@@ -106,6 +107,35 @@ export const cardRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
       },
     },
     (request) => moveCard(app.db, actionContext(app, request), request.params.cardId, request.body),
+  );
+
+  app.post(
+    '/api/cards/:cardId/complete',
+    {
+      schema: {
+        tags: ['cards'],
+        summary: 'Conclui o card (vai para o fim da lista de conclusão, se houver; idempotente)',
+        params: cardIdParamsSchema,
+        response: { 200: cardMutationResultSchema, ...errorResponses(400, 401, 403, 404, 409) },
+      },
+    },
+    (request) =>
+      changeCardCompletion(app.db, actionContext(app, request), request.params.cardId, 'completed'),
+  );
+
+  app.post(
+    '/api/cards/:cardId/reopen',
+    {
+      schema: {
+        tags: ['cards'],
+        summary:
+          'Reabre o card (da lista de conclusão vai para o topo da primeira lista ativa; idempotente)',
+        params: cardIdParamsSchema,
+        response: { 200: cardMutationResultSchema, ...errorResponses(400, 401, 403, 404, 409) },
+      },
+    },
+    (request) =>
+      changeCardCompletion(app.db, actionContext(app, request), request.params.cardId, 'reopened'),
   );
 
   app.post(

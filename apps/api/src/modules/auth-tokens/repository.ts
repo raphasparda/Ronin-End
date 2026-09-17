@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, gte, isNull, or } from 'drizzle-orm';
+import { and, desc, eq, gt, gte, isNull, or, sql } from 'drizzle-orm';
 
 import type { DbExecutor } from '../../db/client';
 import { authTokens, type AuthTokenRow, type NewAuthTokenRow } from '../../db/schema';
@@ -120,6 +120,35 @@ export async function revokeUnusedPasswordResets(
         eq(authTokens.targetUserId, targetUserId),
         isNull(authTokens.usedAt),
         isNull(authTokens.revokedAt),
+      ),
+    );
+}
+
+/**
+ * Anonimização (LGPD, overview.md §5.2): apaga os links de redefinição cujo alvo é o usuário e tira
+ * o e-mail dos convites ligados a ele (o que ele aceitou, ou algum com o e-mail dele). Convite ainda
+ * pendente com esse e-mail é revogado junto (sem e-mail ele viraria um convite aberto).
+ */
+export async function scrubAuthTokensOfUser(
+  db: DbExecutor,
+  user: { id: string; email: string | null },
+  now: Date,
+): Promise<void> {
+  await db
+    .delete(authTokens)
+    .where(and(eq(authTokens.kind, 'password_reset'), eq(authTokens.targetUserId, user.id)));
+  await db
+    .update(authTokens)
+    .set({
+      email: null,
+      revokedAt: sql`CASE WHEN ${authTokens.usedAt} IS NULL THEN coalesce(${authTokens.revokedAt}, ${now}::timestamptz) ELSE ${authTokens.revokedAt} END`,
+    })
+    .where(
+      and(
+        eq(authTokens.kind, 'invite'),
+        user.email === null
+          ? eq(authTokens.usedByUserId, user.id)
+          : or(eq(authTokens.usedByUserId, user.id), eq(authTokens.email, user.email)),
       ),
     );
 }

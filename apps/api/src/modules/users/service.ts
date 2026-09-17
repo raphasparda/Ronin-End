@@ -4,10 +4,14 @@ import type { Database, DbExecutor } from '../../db/client';
 import type { UserRow } from '../../db/schema';
 import { AppError } from '../../lib/app-error';
 import { toIso } from '../../lib/dates';
-import { revokeUnusedPasswordResets } from '../auth-tokens/repository';
+import { revokeUnusedPasswordResets, scrubAuthTokensOfUser } from '../auth-tokens/repository';
+import { emailThrottleKey } from '../auth/throttle';
+import { deleteNotificationsOfUser } from '../notifications/repository';
 import { deleteUserSessions } from '../sessions/service';
 
 import {
+  anonymizeUserRow,
+  deleteEmailThrottle,
   findUserById,
   listUsersByName,
   lockActiveAdminIds,
@@ -19,6 +23,7 @@ export const USER_NOT_FOUND_MESSAGE = 'Usuário não encontrado.';
 export const LAST_ADMIN_MESSAGE = 'É preciso manter ao menos um Admin ativo.';
 export const CANNOT_TARGET_SELF_MESSAGE = 'Você não pode fazer isso com a sua própria conta.';
 export const USER_ANONYMIZED_MESSAGE = 'Esta conta foi anonimizada e não pode ser alterada.';
+export const USER_NOT_DEACTIVATED_MESSAGE = 'Desative a conta antes de anonimizá-la.';
 
 export function toUserSummary(row: UserRow): UserSummary {
   return {
@@ -136,6 +141,44 @@ export async function reactivateUser(
     if (target.status === 'active') return toAdminUser(target);
     const updated = await updateUserById(tx, target.id, { status: 'active', updatedAt: ctx.now });
     if (!updated) throw new AppError('NOT_FOUND', USER_NOT_FOUND_MESSAGE);
+    return toAdminUser(updated);
+  });
+}
+
+/**
+ * `POST /api/admin/users/:userId/anonymize { confirm: true }` (overview.md §5.2, LGPD).
+ * Ordem: 404 → a si mesmo (`CANNOT_TARGET_SELF`) → já anonimizado (200 no-op) → ativo
+ * (`USER_NOT_DEACTIVATED`). `LAST_ADMIN` não se aplica: o alvo já está desativado, então não conta
+ * como Admin ativo. Irreversível. Na mesma transação:
+ * - nome "Usuário removido", e-mail e hash nulos, `anonymized_at`;
+ * - apaga sessões, links de redefinição do usuário, notificações recebidas e o throttle do e-mail;
+ * - tira o e-mail dos convites ligados a ele (revogando algum ainda pendente).
+ * Cards, responsáveis, comentários, atividades e notificações que ele gerou para outros permanecem
+ * (nome resolvido na leitura).
+ */
+export async function anonymizeUser(
+  db: Database,
+  ctx: AdminActionContext,
+  userId: string,
+): Promise<AdminUser> {
+  return db.transaction(async (tx) => {
+    // Mesma ordem de locks das demais operações de Admin (Admins ativos → alvo).
+    await lockActiveAdminIds(tx);
+    const target = await lockTargetOrThrow(tx, userId);
+    if (target.id === ctx.actorId) {
+      throw new AppError('CANNOT_TARGET_SELF', CANNOT_TARGET_SELF_MESSAGE);
+    }
+    if (target.anonymizedAt !== null) return toAdminUser(target);
+    if (target.status !== 'deactivated') {
+      throw new AppError('USER_NOT_DEACTIVATED', USER_NOT_DEACTIVATED_MESSAGE);
+    }
+
+    const updated = await anonymizeUserRow(tx, target.id, ctx.now);
+    if (!updated) throw new AppError('NOT_FOUND', USER_NOT_FOUND_MESSAGE);
+    await deleteUserSessions(tx, target.id);
+    await scrubAuthTokensOfUser(tx, target, ctx.now);
+    await deleteNotificationsOfUser(tx, target.id);
+    if (target.email !== null) await deleteEmailThrottle(tx, emailThrottleKey(target.email));
     return toAdminUser(updated);
   });
 }

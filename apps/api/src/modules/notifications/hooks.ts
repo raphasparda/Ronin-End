@@ -1,12 +1,14 @@
 import type { DbExecutor } from '../../db/client';
 
+import { insertAssignedNotification, insertCommentedNotifications } from './repository';
+
 /**
- * Ganchos de notificação (api.md §11 e §14). A Fatia 7 (tarefa 7.3) liga `notify(tx, ...)` aqui:
- * os serviços de responsáveis e comentários já chamam estes ganchos na transação da ação, então
- * notificar passa a ser atômico com a mudança. Hoje não fazem nada.
+ * Ganchos de notificação (api.md §11 e §14, D2). Os serviços de responsáveis e comentários chamam
+ * estes ganchos na transação da ação, então a notificação é atômica com a mudança.
  *
- * Regras que a implementação da 7.3 deve aplicar (e não os chamadores): sem autonotificação
- * (`userId === actorId`, RN18) e só destinatários ativos.
+ * Regras aplicadas aqui (e não pelos chamadores): sem autonotificação (`userId === actorId`, RN18,
+ * também garantida pelo CHECK `notifications_not_self_check`) e só destinatários ativos e não
+ * anonimizados.
  */
 
 export interface AssignedEvent {
@@ -25,12 +27,15 @@ export interface CommentedEvent {
   now: Date;
 }
 
-/** Chamado depois de gravar uma atribuição nova (`card_assignee_added`). */
-export function onAssigned(_tx: DbExecutor, _event: AssignedEvent): Promise<void> {
-  return Promise.resolve();
+/** Chamado depois de gravar uma atribuição nova (`card_assignee_added`): notifica o atribuído. */
+export async function onAssigned(tx: DbExecutor, event: AssignedEvent): Promise<void> {
+  await insertAssignedNotification(tx, event);
 }
 
-/** Chamado depois de gravar um comentário novo. */
-export function onCommented(_tx: DbExecutor, _event: CommentedEvent): Promise<void> {
-  return Promise.resolve();
+/**
+ * Chamado depois de gravar um comentário novo: notifica os responsáveis do card, menos o autor
+ * (D2: "comentaram em um card em que sou responsável"; o criador do card não entra).
+ */
+export async function onCommented(tx: DbExecutor, event: CommentedEvent): Promise<void> {
+  await insertCommentedNotifications(tx, event);
 }

@@ -35,6 +35,8 @@ import {
   insertList,
 } from '../../db/test-fixtures';
 
+import { findCardAssigneePairs, findCardLabelPairs } from './repository';
+
 describeDb('rotas de cards (kanban_test)', () => {
   const { db } = useTestDatabase();
   const clock = createTestClock();
@@ -932,6 +934,41 @@ describeDb('rotas de cards (kanban_test)', () => {
       expect(res.statusCode).toBe(200);
       expect(boardPayloadSchema.parse(res.json()).cards).toHaveLength(500);
       expect(elapsed).toBeLessThan(300);
+    });
+
+    it('pares de etiquetas e responsáveis só dos cards do escopo (sem arquivados nem de lista arquivada)', async () => {
+      const { board, todo } = await newBoard();
+      const archivedList = await insertList(db(), board.id, {
+        name: 'Velha',
+        position: 'z0',
+        archivedAt: clock.now(),
+      });
+      const label = await insertLabel(db(), board.id);
+      const active = await insertCard(db(), todo, member.user.id, { position: 'a0' });
+      const archivedCard = await insertCard(db(), todo, member.user.id, {
+        position: 'a1',
+        archivedAt: clock.now(),
+      });
+      const inArchivedList = await insertCard(db(), archivedList, member.user.id);
+      for (const c of [active, archivedCard, inArchivedList]) {
+        await db().insert(cardLabels).values({ cardId: c.id, labelId: label.id });
+        await db()
+          .insert(cardAssignees)
+          .values({ cardId: c.id, userId: member.user.id, assignedBy: member.user.id });
+      }
+      const activeScope = { boardId: board.id, state: 'active' } as const;
+      expect((await findCardLabelPairs(db(), activeScope)).map((p) => p.cardId)).toEqual([
+        active.id,
+      ]);
+      expect((await findCardAssigneePairs(db(), activeScope)).map((p) => p.cardId)).toEqual([
+        active.id,
+      ]);
+      const archivedScope = { boardId: board.id, state: 'archived' } as const;
+      expect((await findCardLabelPairs(db(), archivedScope)).map((p) => p.cardId)).toEqual([
+        archivedCard.id,
+      ]);
+      const mine = { assigneeId: member.user.id };
+      expect((await findCardAssigneePairs(db(), mine)).map((p) => p.cardId)).toEqual([active.id]);
     });
   });
 });

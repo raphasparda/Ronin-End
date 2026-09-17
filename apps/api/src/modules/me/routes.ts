@@ -1,5 +1,6 @@
 import {
   changePasswordRequestSchema,
+  myCardsResponseSchema,
   updateMeRequestSchema,
   updateMeResponseSchema,
 } from '@kanban/shared';
@@ -8,9 +9,11 @@ import type { FastifyPluginCallbackZod } from 'fastify-type-provider-zod';
 import { errorResponses, noContentSchema } from '../../lib/route-schemas';
 import { requireUser } from '../../plugins/session';
 
+import { getMyCards } from '../cards/service';
+
 import { changeMyPassword, updateMyProfile } from './service';
 
-/** `PATCH /api/me` e `POST /api/me/password` · Auth (api.md §6). */
+/** `PATCH /api/me`, `POST /api/me/password` e `GET /api/me/cards` · Auth (api.md §6). */
 export const meRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
   app.patch(
     '/api/me',
@@ -46,6 +49,18 @@ export const meRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
       );
       return reply.status(204).send(null);
     },
+  );
+
+  app.get(
+    '/api/me/cards',
+    {
+      schema: {
+        tags: ['eu'],
+        summary: 'Meus cards: abertos e atribuídos a mim, por prazo, prioridade e criação',
+        response: { 200: myCardsResponseSchema, ...errorResponses(401) },
+      },
+    },
+    async (request) => ({ cards: await getMyCards(app.db, requireUser(request).id) }),
   );
 
   done();

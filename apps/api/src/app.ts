@@ -34,11 +34,13 @@ import { inviteRoutes } from './modules/invites/routes';
 import { labelRoutes } from './modules/labels/routes';
 import { listRoutes } from './modules/lists/routes';
 import { meRoutes } from './modules/me/routes';
+import { notificationRoutes } from './modules/notifications/routes';
 import { passwordResetRoutes } from './modules/password-resets/routes';
 import { setupRoutes } from './modules/setup/routes';
 import { userRoutes } from './modules/users/routes';
 import { registerCsrf } from './plugins/csrf';
 import { registerErrorHandlers } from './plugins/errors';
+import { registerMaintenance } from './plugins/maintenance';
 import { registerOpenApi } from './plugins/openapi';
 import { registerRateLimit } from './plugins/rate-limit';
 import { registerSecurityHeaders } from './plugins/security-headers';
@@ -72,6 +74,12 @@ export interface BuildAppOptions {
   clock?: Clock;
   /** Substitui o hasher de senha. Padrão: Argon2id com os parâmetros de `NODE_ENV`. */
   passwords?: PasswordHasher;
+  /**
+   * Liga a limpeza periódica (`plugins/maintenance.ts`). Padrão: só em `production` (em dev o
+   * `tsx watch` reinicia a cada gravação e o banco é descartável; nos testes, `runMaintenance` é
+   * chamado direto com relógio controlado).
+   */
+  maintenance?: boolean;
 }
 
 export type App = FastifyInstance<
@@ -107,11 +115,15 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
 
   // Criar o pool não abre conexão: apps de teste sem banco só falham se consultarem.
   const pool = createPool(env.DATABASE_URL, app.log, { max: env.DATABASE_POOL_MAX });
+  const checkDatabase = opts.checkDatabase ?? createPoolCheck(pool);
+  app.decorate('db', createDb(pool));
+  // Antes do `onClose` do pool: o fechamento espera a limpeza em andamento terminar.
+  if (opts.maintenance ?? env.NODE_ENV === 'production') {
+    registerMaintenance(app);
+  }
   app.addHook('onClose', async () => {
     await pool.end();
   });
-  const checkDatabase = opts.checkDatabase ?? createPoolCheck(pool);
-  app.decorate('db', createDb(pool));
   app.decorate('passwords', opts.passwords ?? createPasswordHasher(argon2ParamsFor(env.NODE_ENV)));
 
   if (env.NODE_ENV !== 'production') {
@@ -138,6 +150,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   await app.register(labelRoutes);
   await app.register(checklistRoutes);
   await app.register(commentRoutes);
+  await app.register(notificationRoutes);
 
   return app;
 }

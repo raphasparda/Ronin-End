@@ -1,7 +1,19 @@
-import { and, asc, desc, eq, isNotNull, isNull, notExists, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  exists,
+  isNotNull,
+  isNull,
+  notExists,
+  sql,
+  type SQL,
+} from 'drizzle-orm';
 
 import type { DbExecutor } from '../../db/client';
 import {
+  boards,
   cardAssignees,
   cardLabels,
   cards,
@@ -14,6 +26,7 @@ import {
   type ChecklistItemRow,
   type ChecklistRow,
   type CommentRow,
+  type ListRow,
   type NewCardRow,
 } from '../../db/schema';
 
@@ -36,26 +49,79 @@ export type CardSummaryRow = Pick<
   checklistTotal: number;
   commentCount: number;
   listName: string;
+  listColor: ListRow['color'];
   listArchived: boolean;
+  boardName: string;
 };
 
-/** Cards de um quadro (`active` ou `archived`) ou um card só (arquivado ou não). */
+/**
+ * Cards de um quadro (`active` ou `archived`), um card só (arquivado ou não) ou "Meus cards"
+ * (`assigneeId`: abertos, não arquivados, em lista e quadro não arquivados, atribuídos ao usuário).
+ */
 export type CardSummaryScope =
-  { boardId: string; state: 'active' | 'archived' } | { cardId: string };
+  { boardId: string; state: 'active' | 'archived' } | { cardId: string } | { assigneeId: string };
+
+/** O card está numa lista ativa (e, com `withBoard`, num quadro ativo). */
+function inActiveContainers(db: DbExecutor, withBoard: boolean): SQL {
+  const listActive = exists(
+    db
+      .select({ one: sql`1` })
+      .from(lists)
+      .where(and(eq(lists.id, cards.listId), isNull(lists.archivedAt))),
+  );
+  if (!withBoard) return listActive;
+  return and(
+    listActive,
+    exists(
+      db
+        .select({ one: sql`1` })
+        .from(boards)
+        .where(and(eq(boards.id, cards.boardId), isNull(boards.archivedAt))),
+    ),
+  ) as SQL;
+}
+
+/**
+ * Filtro completo do escopo sobre `cards`, aplicado igualmente na consulta principal, nas
+ * subconsultas de agregados e nos pares de etiquetas/responsáveis (nada fora do escopo é lido).
+ */
+function scopeFilterOf(db: DbExecutor, scope: CardSummaryScope): SQL {
+  if ('cardId' in scope) return eq(cards.id, scope.cardId);
+  if ('boardId' in scope) {
+    return scope.state === 'active'
+      ? (and(
+          eq(cards.boardId, scope.boardId),
+          isNull(cards.archivedAt),
+          inActiveContainers(db, false),
+        ) as SQL)
+      : (and(eq(cards.boardId, scope.boardId), isNotNull(cards.archivedAt)) as SQL);
+  }
+  return and(
+    exists(
+      db
+        .select({ one: sql`1` })
+        .from(cardAssignees)
+        .where(and(eq(cardAssignees.cardId, cards.id), eq(cardAssignees.userId, scope.assigneeId))),
+    ),
+    eq(cards.status, 'open'),
+    isNull(cards.archivedAt),
+    inActiveContainers(db, true),
+  ) as SQL;
+}
 
 /**
  * Cards com os agregados da face (`checklist`, `commentCount`, `hasDescription`),
  * numa única consulta com subconsultas agrupadas (sem N+1, api.md §9).
  * - quadro `active`: cards não arquivados de listas não arquivadas, por `(listId, position)`;
  * - quadro `archived`: cards arquivados individualmente, por `archivedAt` desc;
- * - card: a linha do card, em qualquer estado.
+ * - card: a linha do card, em qualquer estado;
+ * - `assigneeId` ("Meus cards", D1): por `dueAt ASC NULLS LAST`, prioridade, `createdAt`.
  */
 export async function findCardSummaryRows(
   db: DbExecutor,
   scope: CardSummaryScope,
 ): Promise<CardSummaryRow[]> {
-  const scopeFilter =
-    'cardId' in scope ? eq(cards.id, scope.cardId) : eq(cards.boardId, scope.boardId);
+  const scopeFilter = scopeFilterOf(db, scope);
 
   const checklistAgg = db
     .select({
@@ -101,29 +167,36 @@ export async function findCardSummaryRows(
       checklistTotal: sql<number>`coalesce(${checklistAgg.total}, 0)`.mapWith(Number),
       commentCount: sql<number>`coalesce(${commentAgg.count}, 0)`.mapWith(Number),
       listName: lists.name,
+      listColor: lists.color,
       listArchived: sql<boolean>`(${lists.archivedAt} IS NOT NULL)`,
+      boardName: boards.name,
     })
     .from(cards)
     .innerJoin(lists, eq(lists.id, cards.listId))
+    .innerJoin(boards, eq(boards.id, cards.boardId))
     .leftJoin(checklistAgg, eq(checklistAgg.cardId, cards.id))
     .leftJoin(commentAgg, eq(commentAgg.cardId, cards.id));
 
   if ('cardId' in scope) return query.where(scopeFilter).limit(1);
-  if (scope.state === 'active') {
+  if ('assigneeId' in scope) {
+    // D1: prazo (sem prazo por último), prioridade (enum em ordem crescente: urgent → low, nula por
+    // último), criação.
     return query
-      .where(and(scopeFilter, isNull(cards.archivedAt), isNull(lists.archivedAt)))
-      .orderBy(asc(cards.listId), asc(cards.position));
+      .where(scopeFilter)
+      .orderBy(
+        sql`${cards.dueAt} ASC NULLS LAST`,
+        sql`${cards.priority} DESC NULLS LAST`,
+        asc(cards.createdAt),
+        asc(cards.id),
+      );
   }
-  return query
-    .where(and(scopeFilter, isNotNull(cards.archivedAt)))
-    .orderBy(desc(cards.archivedAt), asc(cards.id));
+  if (scope.state === 'active') {
+    return query.where(scopeFilter).orderBy(asc(cards.listId), asc(cards.position));
+  }
+  return query.where(scopeFilter).orderBy(desc(cards.archivedAt), asc(cards.id));
 }
 
-function pairsFilter(scope: CardSummaryScope) {
-  return 'cardId' in scope ? eq(cards.id, scope.cardId) : eq(cards.boardId, scope.boardId);
-}
-
-/** `(cardId, labelId)` das etiquetas aplicadas (cards do quadro ou um card), por nome da etiqueta. */
+/** `(cardId, labelId)` das etiquetas aplicadas aos cards do escopo, por nome da etiqueta. */
 export async function findCardLabelPairs(
   db: DbExecutor,
   scope: CardSummaryScope,
@@ -133,11 +206,11 @@ export async function findCardLabelPairs(
     .from(cardLabels)
     .innerJoin(cards, eq(cards.id, cardLabels.cardId))
     .innerJoin(labels, eq(labels.id, cardLabels.labelId))
-    .where(pairsFilter(scope))
+    .where(scopeFilterOf(db, scope))
     .orderBy(asc(labels.name), asc(labels.id));
 }
 
-/** `(cardId, userId)` dos responsáveis (cards do quadro ou um card), por ordem de atribuição. */
+/** `(cardId, userId)` dos responsáveis dos cards do escopo, por ordem de atribuição. */
 export async function findCardAssigneePairs(
   db: DbExecutor,
   scope: CardSummaryScope,
@@ -146,7 +219,7 @@ export async function findCardAssigneePairs(
     .select({ cardId: cardAssignees.cardId, userId: cardAssignees.userId })
     .from(cardAssignees)
     .innerJoin(cards, eq(cards.id, cardAssignees.cardId))
-    .where(pairsFilter(scope))
+    .where(scopeFilterOf(db, scope))
     .orderBy(asc(cardAssignees.createdAt), asc(cardAssignees.userId));
 }
 

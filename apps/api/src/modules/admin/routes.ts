@@ -1,6 +1,7 @@
 import {
   adminUserResponseSchema,
   adminUsersResponseSchema,
+  anonymizeUserRequestSchema,
   createInviteRequestSchema,
   createInviteResponseSchema,
   inviteIdParamsSchema,
@@ -17,7 +18,13 @@ import { errorResponses, noContentSchema } from '../../lib/route-schemas';
 import { requireAdmin, requireUser } from '../../plugins/session';
 import { createInvite, listInvites, revokeInvite } from '../invites/service';
 import { createPasswordResetLink } from '../password-resets/service';
-import { changeUserRole, deactivateUser, listAdminUsers, reactivateUser } from '../users/service';
+import {
+  anonymizeUser,
+  changeUserRole,
+  deactivateUser,
+  listAdminUsers,
+  reactivateUser,
+} from '../users/service';
 import { updateWorkspace } from '../workspace/service';
 
 export interface AdminRoutesOptions {
@@ -28,7 +35,6 @@ export interface AdminRoutesOptions {
 /**
  * Rotas `/api/admin/*` · Admin (api.md §8). O `preHandler` do plugin exige Admin em todas: roda
  * depois da validação, então a ordem é 401 → 403 CSRF → 400 → 403 (papel) → 404 → 409.
- * `anonymize` fica para a tarefa 8.3.
  */
 export const adminRoutes: FastifyPluginCallbackZod<AdminRoutesOptions> = (app, opts, done) => {
   app.addHook('preHandler', requireAdmin);
@@ -95,6 +101,23 @@ export const adminRoutes: FastifyPluginCallbackZod<AdminRoutesOptions> = (app, o
     },
     async (request) => ({
       user: await reactivateUser(app.db, ctx(request), request.params.userId),
+    }),
+  );
+
+  app.post(
+    '/api/admin/users/:userId/anonymize',
+    {
+      schema: {
+        tags: ['admin'],
+        summary:
+          'Anonimiza usuário desativado (irreversível; mantém cards, comentários e histórico)',
+        params: userIdParamsSchema,
+        body: anonymizeUserRequestSchema,
+        response: { 200: adminUserResponseSchema, ...errorResponses(400, 401, 403, 404, 409) },
+      },
+    },
+    async (request) => ({
+      user: await anonymizeUser(app.db, ctx(request), request.params.userId),
     }),
   );
 

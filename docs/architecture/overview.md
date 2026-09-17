@@ -615,8 +615,8 @@ Infra: `db/client.ts` (`createPool` com `max` = `DATABASE_POOL_MAX`, `createDb` 
 | Excluir quadro (Admin) | `DELETE boards` → cascata em listas, cards, etiquetas, checklists, comentários, atividades, notificações. |
 | Excluir card (Admin) | cascata do card (responsáveis, etiquetas, checklists, comentários, atividades, notificações). |
 | Desativar usuário | `status='deactivated'`; apaga sessões; revoga redefinições pendentes. Atribuições permanecem. |
-| Anonimizar (só desativado) | `name='Usuário removido'`, `email=NULL`, `password_hash=NULL`, `anonymized_at=now()`; apaga sessões, tokens alvo e notificações recebidas. Cards, comentários e atividades permanecem, exibindo "Usuário removido". Irreversível; não pode reativar (LGPD). |
-| Manutenção diária (`plugins/maintenance.ts`, a cada 24h e no boot) | apaga notificações lidas há > 90 dias (RN19), sessões expiradas, `auth_throttle` sem lock e com janela > 1h, `auth_tokens` expirados/usados há > 30 dias. |
+| Anonimizar (só desativado) | `name='Usuário removido'`, `email=NULL`, `password_hash=NULL`, `anonymized_at=now()`; apaga sessões, tokens alvo, notificações recebidas e o throttle do e-mail; tira o e-mail dos convites ligados a ele. Cards, comentários e atividades permanecem, exibindo "Usuário removido". Irreversível; não pode reativar (LGPD). |
+| Manutenção diária (`plugins/maintenance.ts`, a cada 24h e no boot; ligada por padrão só em produção, api.md §18.4 item 40) | apaga notificações lidas há > 90 dias (RN19), sessões expiradas, `auth_throttle` sem lock e com janela > 1h, `auth_tokens` expirados/usados/revogados há > 30 dias (e criados há > 30 dias). |
 
 ### 5.3 Atividade (C12)
 

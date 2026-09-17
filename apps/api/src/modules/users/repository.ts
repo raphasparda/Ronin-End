@@ -1,7 +1,8 @@
+import { ANONYMIZED_USER_NAME } from '@kanban/shared';
 import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 
 import type { DbExecutor } from '../../db/client';
-import { users, type NewUserRow, type UserRow } from '../../db/schema';
+import { authThrottle, users, type NewUserRow, type UserRow } from '../../db/schema';
 
 /** `true` se existe ao menos um usuário (qualquer status). Define se a instância precisa de setup. */
 export async function hasAnyUser(db: DbExecutor): Promise<boolean> {
@@ -90,4 +91,32 @@ export async function updateActiveUserPassword(
 export async function lockUserShared(db: DbExecutor, id: string): Promise<UserRow | undefined> {
   const [row] = await db.select().from(users).where(eq(users.id, id)).limit(1).for('share');
   return row;
+}
+
+/**
+ * Anonimiza a linha (overview.md §5.2): nome "Usuário removido", e-mail e hash nulos,
+ * `anonymized_at`. Só usuário desativado (o CHECK `users_anonymized_check` também exige).
+ */
+export async function anonymizeUserRow(
+  db: DbExecutor,
+  id: string,
+  now: Date,
+): Promise<UserRow | undefined> {
+  const [row] = await db
+    .update(users)
+    .set({
+      name: ANONYMIZED_USER_NAME,
+      email: null,
+      passwordHash: null,
+      anonymizedAt: now,
+      updatedAt: now,
+    })
+    .where(and(eq(users.id, id), eq(users.status, 'deactivated'), isNull(users.anonymizedAt)))
+    .returning();
+  return row;
+}
+
+/** Apaga o contador de tentativas de login do e-mail (dado pessoal na chave). */
+export async function deleteEmailThrottle(db: DbExecutor, key: string): Promise<void> {
+  await db.delete(authThrottle).where(eq(authThrottle.key, key));
 }
