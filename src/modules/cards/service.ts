@@ -4,16 +4,17 @@ import {
   completionChangeOnRestore,
   reopenTargetListId,
   type Activity,
-  type ArchivedCard,
+  type BoardArchivedCard,
+  type BoardCard,
   type CardDetail,
   type CardMutationResult,
   type CardSummary,
   type Checklist,
   type CompletionChange,
   type Comment,
+  type LockedCard,
   type MoveCardRequest,
   type MyCard,
-  type Role,
   type UpdateCardRequest,
 } from '@raphasparda/ronin-shared';
 
@@ -33,6 +34,7 @@ import { findUserById, lockUserShared } from '../users/repository';
 import { USER_NOT_FOUND_MESSAGE } from '../users/service';
 import { getWorkspace } from '../workspace/service';
 
+import { assertCardAccess, cardRestricted, type CardActor } from './access';
 import {
   deleteCardAssignee,
   deleteCardById,
@@ -44,6 +46,7 @@ import {
   findCardComments,
   findCardLabelPairs,
   findCardSummaryRows,
+  findCardViewerIds,
   insertCardAssignee,
   insertCardRow,
   lockCardById,
@@ -64,9 +67,9 @@ export const CARD_ARCHIVED_COMPLETION_MESSAGE =
 export const USER_NOT_ACTIVE_ASSIGN_MESSAGE =
   'Esta pessoa está desativada e não pode ser atribuída ao card.';
 
-/** Contexto de quem executa a ação. */
+/** Contexto de quem executa a ação (o papel entra na checagem de acesso, ADR 0015). */
 export interface CardActionContext {
-  actorId: string;
+  actor: CardActor;
   now: Date;
 }
 
@@ -114,15 +117,27 @@ function toCardSummary(
   };
 }
 
+/** Card restrito para quem não tem acesso: só id, lista, posição e título (ADR 0015). */
+function toLockedCard(row: CardSummaryRow): LockedCard {
+  return {
+    id: row.id,
+    listId: row.listId,
+    position: row.position,
+    title: row.title,
+    locked: true,
+  };
+}
+
 async function loadSummaries(
   db: DbExecutor,
   scope: CardSummaryScope,
-): Promise<{ row: CardSummaryRow; card: CardSummary }[]> {
-  const rows = await findCardSummaryRows(db, scope);
+  actor: CardActor,
+): Promise<{ row: CardSummaryRow; card: CardSummary | null }[]> {
+  const rows = await findCardSummaryRows(db, scope, actor);
   if (rows.length === 0) return [];
   // Sequencial: `db` pode ser uma transação (uma conexão só).
-  const labelPairs = await findCardLabelPairs(db, scope);
-  const assigneePairs = await findCardAssigneePairs(db, scope);
+  const labelPairs = await findCardLabelPairs(db, scope, actor);
+  const assigneePairs = await findCardAssigneePairs(db, scope, actor);
   const labelIds = groupBy(
     labelPairs,
     (p) => p.cardId,
@@ -133,21 +148,40 @@ async function loadSummaries(
     (p) => p.cardId,
     (p) => p.userId,
   );
-  return rows.map((row) => ({ row, card: toCardSummary(row, labelIds, assigneeIds) }));
-}
-
-/** Cards do payload do quadro: não arquivados, de listas não arquivadas, por `(listId, position)`. */
-export async function loadBoardCards(db: DbExecutor, boardId: string): Promise<CardSummary[]> {
-  return (await loadSummaries(db, { boardId, state: 'active' })).map(({ card }) => card);
-}
-
-/** Cards arquivados individualmente, com o contexto da lista, por `archivedAt` desc. */
-export async function loadArchivedCards(db: DbExecutor, boardId: string): Promise<ArchivedCard[]> {
-  return (await loadSummaries(db, { boardId, state: 'archived' })).map(({ row, card }) => ({
-    ...card,
-    listName: row.listName,
-    listArchived: row.listArchived,
+  return rows.map((row) => ({
+    row,
+    card: row.accessible ? toCardSummary(row, labelIds, assigneeIds) : null,
   }));
+}
+
+/**
+ * Cards do payload do quadro: não arquivados, de listas não arquivadas, por `(listId, position)`.
+ * Card restrito sem acesso entra como `LockedCard`, na posição e na lista dele (ADR 0015).
+ */
+export async function loadBoardCards(
+  db: DbExecutor,
+  boardId: string,
+  actor: CardActor,
+): Promise<BoardCard[]> {
+  return (await loadSummaries(db, { boardId, state: 'active' }, actor)).map(({ row, card }) =>
+    card === null ? toLockedCard(row) : card,
+  );
+}
+
+/**
+ * Cards arquivados individualmente, com o contexto da lista, por `archivedAt` desc. Sem acesso: o
+ * mesmo `LockedCard` do quadro, sem a lista de origem (scope §11, F4).
+ */
+export async function loadArchivedCards(
+  db: DbExecutor,
+  boardId: string,
+  actor: CardActor,
+): Promise<BoardArchivedCard[]> {
+  return (await loadSummaries(db, { boardId, state: 'archived' }, actor)).map(({ row, card }) =>
+    card === null
+      ? toLockedCard(row)
+      : { ...card, listName: row.listName, listArchived: row.listArchived },
+  );
 }
 
 /**
@@ -155,30 +189,47 @@ export async function loadArchivedCards(db: DbExecutor, boardId: string): Promis
  * atribuídos ao usuário. Ordem: `dueAt ASC NULLS LAST`, prioridade (Urgente → sem), `createdAt`.
  * Três consultas (faces, etiquetas, responsáveis) num snapshot único.
  */
-export async function getMyCards(db: Database, userId: string): Promise<MyCard[]> {
+export async function getMyCards(db: Database, actor: CardActor): Promise<MyCard[]> {
   return db.transaction(
     async (tx) =>
-      (await loadSummaries(tx, { assigneeId: userId })).map(({ row, card }) => ({
-        ...card,
-        boardName: row.boardName,
-        listName: row.listName,
-        listColor: row.listColor,
-      })),
+      // A consulta já omite o que o ator não pode abrir (RN32 e api.md §18.7 item 49).
+      (await loadSummaries(tx, { assigneeId: actor.id }, actor)).flatMap(({ row, card }) =>
+        card === null
+          ? []
+          : [
+              {
+                ...card,
+                boardName: row.boardName,
+                listName: row.listName,
+                listColor: row.listColor,
+              },
+            ],
+      ),
     { isolationLevel: 'repeatable read', accessMode: 'read only' },
   );
 }
 
-/** Face de um card (arquivado ou não). */
-export async function loadCardSummary(db: DbExecutor, cardId: string): Promise<CardSummary> {
-  const [found] = await loadSummaries(db, { cardId });
+/** Face de um card (arquivado ou não), para quem tem acesso a ele. */
+export async function loadCardSummary(
+  db: DbExecutor,
+  cardId: string,
+  actor: CardActor,
+): Promise<CardSummary> {
+  const [found] = await loadSummaries(db, { cardId }, actor);
   if (!found) throw notFound();
+  if (found.card === null) throw cardRestricted();
   return found.card;
 }
 
-async function loadCardDetail(db: DbExecutor, cardId: string): Promise<CardDetail> {
+async function loadCardDetail(
+  db: DbExecutor,
+  cardId: string,
+  actor: CardActor,
+): Promise<CardDetail> {
   const card = await findCardById(db, cardId);
   if (!card) throw notFound();
-  const summary = await loadCardSummary(db, cardId);
+  await assertCardAccess(db, card, actor);
+  const summary = await loadCardSummary(db, cardId, actor);
   const board = await findBoardById(db, card.boardId);
   const list = await findListById(db, card.listId);
   if (!board || !list) throw notFound();
@@ -203,8 +254,7 @@ async function loadCardDetail(db: DbExecutor, cardId: string): Promise<CardDetai
   return {
     ...summary,
     description: card.description,
-    // A lista de acesso entra na tarefa 11.4 (card `team` responde sempre `[]`).
-    viewerIds: [],
+    viewerIds: card.visibility === 'restricted' ? await findCardViewerIds(db, cardId) : [],
     completedBy: card.completedBy,
     createdBy: card.createdBy,
     createdAt: toIso(card.createdAt),
@@ -235,19 +285,32 @@ async function loadCardDetail(db: DbExecutor, cardId: string): Promise<CardDetai
   };
 }
 
-/** `GET /api/cards/:cardId`: detalhe (card arquivado também), num snapshot único. */
-export async function getCardDetail(db: Database, cardId: string): Promise<CardDetail> {
-  return db.transaction((tx) => loadCardDetail(tx, cardId), {
+/**
+ * `GET /api/cards/:cardId`: detalhe (card arquivado também), num snapshot único.
+ * Card restrito sem acesso → `403 CARD_RESTRICTED` (não 404: o quadro já mostra que ele existe).
+ */
+export async function getCardDetail(
+  db: Database,
+  cardId: string,
+  actor: CardActor,
+): Promise<CardDetail> {
+  return db.transaction((tx) => loadCardDetail(tx, cardId, actor), {
     isolationLevel: 'repeatable read',
     accessMode: 'read only',
   });
 }
 
 /** `GET /api/cards/:cardId/activity`: até 500, mais recentes primeiro. */
-export async function getCardActivity(db: Database, cardId: string): Promise<Activity[]> {
+export async function getCardActivity(
+  db: Database,
+  cardId: string,
+  actor: CardActor,
+): Promise<Activity[]> {
   return db.transaction(
     async (tx) => {
-      if (!(await findCardById(tx, cardId))) throw notFound();
+      const card = await findCardById(tx, cardId);
+      if (!card) throw notFound();
+      await assertCardAccess(tx, card, actor);
       return listCardActivities(tx, cardId);
     },
     { isolationLevel: 'repeatable read', accessMode: 'read only' },
@@ -295,7 +358,7 @@ export async function cardTransaction<T>(
   }
 }
 
-export interface LockedCard {
+export interface CardLock {
   card: CardRow;
   boards: Map<string, BoardRow>;
   lists: Map<string, ListRow>;
@@ -307,12 +370,21 @@ export interface LockedCard {
  * mutações de cards e compatível com as de listas (quadro → lista → card), então não há ciclo.
  * Card inexistente (ou excluído no meio) → 404. Se o card mudou de lista/quadro entre a leitura
  * e o lock, lança `CardMovedConcurrently` (a transação é refeita por `cardTransaction`).
+ *
+ * Depois do lock, e antes de qualquer 409, checa o acesso ao card (ADR 0015): como toda mutação de
+ * card, checklist, comentário, etiqueta e responsável passa por aqui, a regra vale por construção e
+ * sobre a linha já bloqueada.
  */
 export async function lockCard(
   tx: DbExecutor,
   cardId: string,
-  options: { lockLists: boolean; extraBoardIds?: string[]; extraListIds?: string[] },
-): Promise<LockedCard> {
+  options: {
+    actor: CardActor;
+    lockLists: boolean;
+    extraBoardIds?: string[];
+    extraListIds?: string[];
+  },
+): Promise<CardLock> {
   const unlocked = await findCardById(tx, cardId);
   if (!unlocked) throw notFound();
 
@@ -333,6 +405,7 @@ export async function lockCard(
   if (card.listId !== unlocked.listId || card.boardId !== unlocked.boardId) {
     throw new CardMovedConcurrently();
   }
+  await assertCardAccess(tx, card, options.actor);
   return { card, boards, lists };
 }
 
@@ -372,19 +445,19 @@ export async function createCard(
       listId: list.id,
       title,
       position,
-      createdBy: ctx.actorId,
+      createdBy: ctx.actor.id,
       createdAt: ctx.now,
       updatedAt: ctx.now,
     });
     await recordActivity(tx, {
       cardId: card.id,
       boardId: card.boardId,
-      actorId: ctx.actorId,
+      actorId: ctx.actor.id,
       now: ctx.now,
       type: 'card_created',
       data: { listId: list.id, listName: list.name },
     });
-    return loadCardSummary(tx, card.id);
+    return loadCardSummary(tx, card.id, ctx.actor);
   });
 }
 
@@ -400,11 +473,11 @@ export async function updateCard(
   input: UpdateCardRequest,
 ): Promise<CardDetail> {
   return cardTransaction(db, async (tx) => {
-    const { card, boards } = await lockCard(tx, cardId, { lockLists: false });
+    const { card, boards } = await lockCard(tx, cardId, { actor: ctx.actor, lockLists: false });
     assertBoardWritable(boards.get(card.boardId));
 
     const changes: Parameters<typeof updateCardById>[2] = {};
-    const base = { cardId: card.id, boardId: card.boardId, actorId: ctx.actorId, now: ctx.now };
+    const base = { cardId: card.id, boardId: card.boardId, actorId: ctx.actor.id, now: ctx.now };
 
     if (input.title !== undefined && input.title !== card.title) {
       changes.title = input.title;
@@ -452,7 +525,7 @@ export async function updateCard(
     if (Object.keys(changes).length > 0) {
       await updateCardById(tx, card.id, { ...changes, updatedAt: ctx.now });
     }
-    return loadCardDetail(tx, card.id);
+    return loadCardDetail(tx, card.id, ctx.actor);
   });
 }
 
@@ -475,6 +548,7 @@ export async function moveCard(
     if (!targetRef) throw new AppError('NOT_FOUND', LIST_NOT_FOUND_MESSAGE);
 
     const { card, boards, lists } = await lockCard(tx, cardId, {
+      actor: ctx.actor,
       lockLists: true,
       extraBoardIds: [targetRef.boardId],
       extraListIds: [targetRef.id],
@@ -503,7 +577,7 @@ export async function moveCard(
       updatedAt: ctx.now,
     });
 
-    const base = { cardId: card.id, boardId: target.boardId, actorId: ctx.actorId, now: ctx.now };
+    const base = { cardId: card.id, boardId: target.boardId, actorId: ctx.actor.id, now: ctx.now };
     if (source.id !== target.id) {
       await recordActivity(tx, {
         ...base,
@@ -530,13 +604,13 @@ export async function moveCard(
       await applyCompletionChange(tx, {
         card: moved,
         change: completionChange,
-        actorId: ctx.actorId,
+        actorId: ctx.actor.id,
         now: ctx.now,
       });
     }
 
     return {
-      card: await loadCardSummary(tx, card.id),
+      card: await loadCardSummary(tx, card.id, ctx.actor),
       completionChange,
       removedLabelIds,
     };
@@ -585,6 +659,7 @@ export async function changeCardCompletion(
     const plannedTarget = await completionTargetListId(tx, unlocked, change);
 
     const { card, boards, lists } = await lockCard(tx, cardId, {
+      actor: ctx.actor,
       lockLists: true,
       extraListIds: plannedTarget === null ? [] : [plannedTarget],
     });
@@ -596,7 +671,7 @@ export async function changeCardCompletion(
     const expected = change === 'completed' ? 'open' : 'completed';
     if (card.status !== expected) {
       return {
-        card: await loadCardSummary(tx, card.id),
+        card: await loadCardSummary(tx, card.id, ctx.actor),
         completionChange: null,
         removedLabelIds: [],
       };
@@ -625,7 +700,7 @@ export async function changeCardCompletion(
       await recordActivity(tx, {
         cardId: card.id,
         boardId: card.boardId,
-        actorId: ctx.actorId,
+        actorId: ctx.actor.id,
         now: ctx.now,
         type: 'card_moved',
         data: {
@@ -644,11 +719,11 @@ export async function changeCardCompletion(
     await applyCompletionChange(tx, {
       card: current,
       change,
-      actorId: ctx.actorId,
+      actorId: ctx.actor.id,
       now: ctx.now,
     });
     return {
-      card: await loadCardSummary(tx, card.id),
+      card: await loadCardSummary(tx, card.id, ctx.actor),
       completionChange: change,
       removedLabelIds: [],
     };
@@ -662,20 +737,20 @@ export async function archiveCard(
   cardId: string,
 ): Promise<CardSummary> {
   return cardTransaction(db, async (tx) => {
-    const { card, boards } = await lockCard(tx, cardId, { lockLists: true });
+    const { card, boards } = await lockCard(tx, cardId, { actor: ctx.actor, lockLists: true });
     assertBoardWritable(boards.get(card.boardId));
     if (card.archivedAt === null) {
       await updateCardById(tx, card.id, { archivedAt: ctx.now, updatedAt: ctx.now });
       await recordActivity(tx, {
         cardId: card.id,
         boardId: card.boardId,
-        actorId: ctx.actorId,
+        actorId: ctx.actor.id,
         now: ctx.now,
         type: 'card_archived',
         data: {},
       });
     }
-    return loadCardSummary(tx, card.id);
+    return loadCardSummary(tx, card.id, ctx.actor);
   });
 }
 
@@ -691,9 +766,12 @@ export async function restoreCard(
   cardId: string,
 ): Promise<CardSummary> {
   return cardTransaction(db, async (tx) => {
-    const { card, boards, lists } = await lockCard(tx, cardId, { lockLists: true });
+    const { card, boards, lists } = await lockCard(tx, cardId, {
+      actor: ctx.actor,
+      lockLists: true,
+    });
     assertBoardWritable(boards.get(card.boardId));
-    if (card.archivedAt === null) return loadCardSummary(tx, card.id);
+    if (card.archivedAt === null) return loadCardSummary(tx, card.id, ctx.actor);
     const list = lists.get(card.listId);
     if (!list) throw notFound();
     if (list.archivedAt !== null) throw listArchived();
@@ -707,7 +785,7 @@ export async function restoreCard(
     await recordActivity(tx, {
       cardId: card.id,
       boardId: card.boardId,
-      actorId: ctx.actorId,
+      actorId: ctx.actor.id,
       now: ctx.now,
       type: 'card_restored',
       data: {},
@@ -717,11 +795,11 @@ export async function restoreCard(
       await applyCompletionChange(tx, {
         card: restored,
         change,
-        actorId: ctx.actorId,
+        actorId: ctx.actor.id,
         now: ctx.now,
       });
     }
-    return loadCardSummary(tx, card.id);
+    return loadCardSummary(tx, card.id, ctx.actor);
   });
 }
 
@@ -729,13 +807,9 @@ export async function restoreCard(
  * `DELETE /api/cards/:cardId` (Admin): exclusão definitiva em cascata.
  * Ordem: 404 → 403 (papel) → `409 BOARD_ARCHIVED` (quadro arquivado é somente leitura, I10).
  */
-export async function deleteCard(
-  db: Database,
-  actor: { role: Role },
-  cardId: string,
-): Promise<void> {
+export async function deleteCard(db: Database, actor: CardActor, cardId: string): Promise<void> {
   await cardTransaction(db, async (tx) => {
-    const { card, boards } = await lockCard(tx, cardId, { lockLists: false });
+    const { card, boards } = await lockCard(tx, cardId, { actor, lockLists: false });
     if (actor.role !== 'admin') throw new AppError('FORBIDDEN', FORBIDDEN_MESSAGE);
     assertBoardWritable(boards.get(card.boardId));
     await deleteCardById(tx, card.id);
@@ -760,7 +834,7 @@ export async function assignCard(
   userId: string,
 ): Promise<string[]> {
   return cardTransaction(db, async (tx) => {
-    const { card, boards } = await lockCard(tx, cardId, { lockLists: false });
+    const { card, boards } = await lockCard(tx, cardId, { actor: ctx.actor, lockLists: false });
     if (!(await findUserById(tx, userId))) throw new AppError('NOT_FOUND', USER_NOT_FOUND_MESSAGE);
     assertBoardWritable(boards.get(card.boardId));
 
@@ -776,19 +850,19 @@ export async function assignCard(
     const inserted = await insertCardAssignee(tx, {
       cardId: card.id,
       userId,
-      assignedBy: ctx.actorId,
+      assignedBy: ctx.actor.id,
       now: ctx.now,
     });
     if (inserted) {
       await recordActivity(tx, {
         cardId: card.id,
         boardId: card.boardId,
-        actorId: ctx.actorId,
+        actorId: ctx.actor.id,
         now: ctx.now,
         type: 'card_assignee_added',
         data: { userId },
       });
-      await onAssigned(tx, { cardId: card.id, userId, actorId: ctx.actorId, now: ctx.now });
+      await onAssigned(tx, { cardId: card.id, userId, actorId: ctx.actor.id, now: ctx.now });
     }
     return findCardAssigneeIds(tx, card.id);
   });
@@ -805,7 +879,7 @@ export async function unassignCard(
   userId: string,
 ): Promise<string[]> {
   return cardTransaction(db, async (tx) => {
-    const { card, boards } = await lockCard(tx, cardId, { lockLists: false });
+    const { card, boards } = await lockCard(tx, cardId, { actor: ctx.actor, lockLists: false });
     if (!(await findUserById(tx, userId))) throw new AppError('NOT_FOUND', USER_NOT_FOUND_MESSAGE);
     assertBoardWritable(boards.get(card.boardId));
 
@@ -813,7 +887,7 @@ export async function unassignCard(
       await recordActivity(tx, {
         cardId: card.id,
         boardId: card.boardId,
-        actorId: ctx.actorId,
+        actorId: ctx.actor.id,
         now: ctx.now,
         type: 'card_assignee_removed',
         data: { userId },

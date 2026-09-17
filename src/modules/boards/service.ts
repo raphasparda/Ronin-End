@@ -15,6 +15,7 @@ import type { BoardRow, ListRow } from '../../db/schema';
 import { AppError } from '../../lib/app-error';
 import { toIso, toIsoOrNull } from '../../lib/dates';
 import { FORBIDDEN_MESSAGE } from '../../plugins/session';
+import type { CardActor } from '../cards/access';
 import { loadArchivedCards, loadBoardCards } from '../cards/service';
 import { loadBoardLabels } from '../labels/service';
 import { findActiveLists, findArchivedLists, insertLists } from '../lists/repository';
@@ -126,12 +127,16 @@ export async function createBoard(
  * `GET /api/boards/:boardId`: payload do quadro (arquivado também). Leitura num snapshot único
  * (`REPEATABLE READ`, somente leitura) para listas e cards não divergirem entre as consultas.
  */
-export async function getBoardPayload(db: Database, boardId: string): Promise<BoardPayload> {
+export async function getBoardPayload(
+  db: Database,
+  boardId: string,
+  actor: CardActor,
+): Promise<BoardPayload> {
   return db.transaction(
     async (tx) => {
       const board = await getBoardOrThrow(tx, boardId);
       const lists = await findActiveLists(tx, boardId);
-      const cards = await loadBoardCards(tx, boardId);
+      const cards = await loadBoardCards(tx, boardId, actor);
       const labels = await loadBoardLabels(tx, boardId);
       return { board: toBoard(board), lists: lists.map(toList), cards, labels };
     },
@@ -195,12 +200,13 @@ export async function deleteBoard(
 export async function getBoardArchived(
   db: Database,
   boardId: string,
+  actor: CardActor,
 ): Promise<BoardArchivedResponse> {
   return db.transaction(
     async (tx) => {
       await getBoardOrThrow(tx, boardId);
       const lists = await findArchivedLists(tx, boardId);
-      const cards = await loadArchivedCards(tx, boardId);
+      const cards = await loadArchivedCards(tx, boardId, actor);
       return { lists: lists.map(toList), cards };
     },
     { isolationLevel: 'repeatable read', accessMode: 'read only' },

@@ -7,6 +7,7 @@ import type {
 import type { Database } from '../../db/client';
 import { AppError } from '../../lib/app-error';
 import { toIso, toIsoOrNull } from '../../lib/dates';
+import type { CardActor } from '../cards/access';
 
 import {
   countUnreadNotifications,
@@ -39,13 +40,13 @@ function toNotification(row: NotificationListRow): Notification {
  */
 export async function listNotifications(
   db: Database,
-  userId: string,
+  actor: CardActor,
   query: NotificationsQuery,
 ): Promise<NotificationsResponse> {
   return db.transaction(
     async (tx) => {
       const before = query.before === undefined ? null : new Date(query.before);
-      const rows = await findNotificationsPage(tx, userId, { limit: query.limit + 1, before });
+      const rows = await findNotificationsPage(tx, actor, { limit: query.limit + 1, before });
 
       let page = rows.slice(0, query.limit);
       let nextBefore: Date | null = null;
@@ -54,12 +55,12 @@ export async function listNotifications(
       if (last && overflow) {
         nextBefore = last.createdAt;
         if (overflow.createdAt.getTime() === last.createdAt.getTime()) {
-          const tied = await findNotificationsAt(tx, userId, last.createdAt);
+          const tied = await findNotificationsAt(tx, actor, last.createdAt);
           page = [
             ...page.filter((row) => row.createdAt.getTime() !== last.createdAt.getTime()),
             ...tied,
           ];
-          const older = await findNotificationsPage(tx, userId, {
+          const older = await findNotificationsPage(tx, actor, {
             limit: 1,
             before: last.createdAt,
           });
@@ -69,7 +70,7 @@ export async function listNotifications(
 
       return {
         notifications: page.map(toNotification),
-        unreadCount: await countUnreadNotifications(tx, userId),
+        unreadCount: await countUnreadNotifications(tx, actor),
         nextBefore: toIsoOrNull(nextBefore),
       };
     },
@@ -78,8 +79,8 @@ export async function listNotifications(
 }
 
 /** `GET /api/notifications/unread-count`. */
-export function getUnreadCount(db: Database, userId: string): Promise<number> {
-  return countUnreadNotifications(db, userId);
+export function getUnreadCount(db: Database, actor: CardActor): Promise<number> {
+  return countUnreadNotifications(db, actor);
 }
 
 /** `POST /api/notifications/:notificationId/read`. De outro usuário ou inexistente → 404. */

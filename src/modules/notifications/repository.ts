@@ -9,6 +9,7 @@ import {
   users,
   type NotificationTypeValue,
 } from '../../db/schema';
+import { cardAccessCondition, type CardActor } from '../cards/access';
 
 export interface NotificationListRow {
   id: string;
@@ -39,10 +40,12 @@ const listColumns = {
 /**
  * Notificações do destinatário, mais recentes primeiro (`created_at DESC, id DESC`), com o card e o
  * quadro atuais. `before` exclusivo. Usa `notifications_user_id_created_at_idx`.
+ * Notificação de card restrito sem acesso é **omitida** (RN40, api.md §18.7 item 49): a linha não é
+ * apagada e volta a aparecer se o acesso voltar.
  */
 export async function findNotificationsPage(
   db: DbExecutor,
-  userId: string,
+  actor: CardActor,
   options: { limit: number; before: Date | null },
 ): Promise<NotificationListRow[]> {
   return db
@@ -52,7 +55,8 @@ export async function findNotificationsPage(
     .innerJoin(boards, eq(boards.id, cards.boardId))
     .where(
       and(
-        eq(notifications.userId, userId),
+        eq(notifications.userId, actor.id),
+        cardAccessCondition(db, actor),
         options.before === null ? undefined : lt(notifications.createdAt, options.before),
       ),
     )
@@ -63,7 +67,7 @@ export async function findNotificationsPage(
 /** Notificações do destinatário criadas exatamente em `createdAt` (empate na borda da página). */
 export async function findNotificationsAt(
   db: DbExecutor,
-  userId: string,
+  actor: CardActor,
   createdAt: Date,
 ): Promise<NotificationListRow[]> {
   return db
@@ -71,16 +75,32 @@ export async function findNotificationsAt(
     .from(notifications)
     .innerJoin(cards, eq(cards.id, notifications.cardId))
     .innerJoin(boards, eq(boards.id, cards.boardId))
-    .where(and(eq(notifications.userId, userId), eq(notifications.createdAt, createdAt)))
+    .where(
+      and(
+        eq(notifications.userId, actor.id),
+        cardAccessCondition(db, actor),
+        eq(notifications.createdAt, createdAt),
+      ),
+    )
     .orderBy(desc(notifications.id));
 }
 
-/** Contador de não lidas (`notifications_user_id_unread_idx`). */
-export async function countUnreadNotifications(db: DbExecutor, userId: string): Promise<number> {
+/**
+ * Contador de não lidas (`notifications_user_id_unread_idx`), sem as de card que o usuário não pode
+ * abrir (RN40): a página e o contador saem do mesmo critério.
+ */
+export async function countUnreadNotifications(db: DbExecutor, actor: CardActor): Promise<number> {
   const [row] = await db
     .select({ value: count() })
     .from(notifications)
-    .where(and(eq(notifications.userId, userId), isNull(notifications.readAt)));
+    .innerJoin(cards, eq(cards.id, notifications.cardId))
+    .where(
+      and(
+        eq(notifications.userId, actor.id),
+        isNull(notifications.readAt),
+        cardAccessCondition(db, actor),
+      ),
+    );
   return row?.value ?? 0;
 }
 

@@ -28,7 +28,7 @@ export const notificationRoutes: FastifyPluginCallbackZod = (app, _opts, done) =
         response: { 200: notificationsResponseSchema, ...errorResponses(400, 401) },
       },
     },
-    (request) => listNotifications(app.db, requireUser(request).id, request.query),
+    (request) => listNotifications(app.db, requireUser(request), request.query),
   );
 
   app.get(
@@ -40,7 +40,7 @@ export const notificationRoutes: FastifyPluginCallbackZod = (app, _opts, done) =
         response: { 200: unreadCountResponseSchema, ...errorResponses(401) },
       },
     },
-    async (request) => ({ unreadCount: await getUnreadCount(app.db, requireUser(request).id) }),
+    async (request) => ({ unreadCount: await getUnreadCount(app.db, requireUser(request)) }),
   );
 
   app.post(

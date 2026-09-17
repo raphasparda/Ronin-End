@@ -29,7 +29,7 @@ import {
 } from './service';
 
 function actionContext(app: Pick<App, 'clock'>, request: FastifyRequest): ChecklistActionContext {
-  return { actorId: requireUser(request).id, now: app.clock() };
+  return { actor: requireUser(request), now: app.clock() };
 }
 
 /** Checklists e itens · Auth (api.md §13). */
@@ -88,7 +88,7 @@ export const checklistRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
       },
     },
     async (request, reply) => {
-      await deleteChecklist(app.db, request.params.checklistId);
+      await deleteChecklist(app.db, requireUser(request), request.params.checklistId);
       return reply.status(204).send(null);
     },
   );
@@ -168,7 +168,7 @@ export const checklistRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
       },
     },
     async (request, reply) => {
-      await deleteChecklistItem(app.db, request.params.itemId);
+      await deleteChecklistItem(app.db, requireUser(request), request.params.itemId);
       return reply.status(204).send(null);
     },
   );

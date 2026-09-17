@@ -10,6 +10,7 @@ import {
 import type { FastifyPluginCallbackZod } from 'fastify-type-provider-zod';
 
 import { errorResponses, noContentSchema } from '../../lib/route-schemas';
+import { requireUser } from '../../plugins/session';
 
 import { applyLabel, createLabel, deleteLabel, removeLabel, updateLabel } from './service';
 
@@ -75,7 +76,12 @@ export const labelRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
       },
     },
     async (request) => ({
-      labelIds: await applyLabel(app.db, request.params.cardId, request.params.labelId),
+      labelIds: await applyLabel(
+        app.db,
+        requireUser(request),
+        request.params.cardId,
+        request.params.labelId,
+      ),
     }),
   );
 
@@ -90,7 +96,12 @@ export const labelRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
       },
     },
     async (request) => ({
-      labelIds: await removeLabel(app.db, request.params.cardId, request.params.labelId),
+      labelIds: await removeLabel(
+        app.db,
+        requireUser(request),
+        request.params.cardId,
+        request.params.labelId,
+      ),
     }),
   );
 

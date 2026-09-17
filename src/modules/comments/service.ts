@@ -4,6 +4,7 @@ import type { Database, DbExecutor } from '../../db/client';
 import type { CommentRow } from '../../db/schema';
 import { AppError } from '../../lib/app-error';
 import { toIso, toIsoOrNull } from '../../lib/dates';
+import type { CardActor } from '../cards/access';
 import { assertBoardWritable, cardTransaction, lockCard } from '../cards/service';
 import { onCommented } from '../notifications/hooks';
 
@@ -47,13 +48,14 @@ function notFound(): AppError {
  */
 async function lockCommentForWrite(
   tx: DbExecutor,
+  actor: CardActor,
   commentId: string,
   canWrite: (comment: CommentRow) => boolean,
   forbiddenMessage: string,
 ): Promise<CommentRow> {
   const found = await findCommentById(tx, commentId);
   if (!found) throw notFound();
-  const { card, boards } = await lockCard(tx, found.cardId, { lockLists: false });
+  const { card, boards } = await lockCard(tx, found.cardId, { actor, lockLists: false });
   const comment = await lockCommentById(tx, commentId);
   if (!comment) throw notFound();
   if (!canWrite(comment)) throw new AppError('FORBIDDEN', forbiddenMessage);
@@ -73,7 +75,7 @@ export async function createComment(
   body: string,
 ): Promise<Comment> {
   return cardTransaction(db, async (tx) => {
-    const { card, boards } = await lockCard(tx, cardId, { lockLists: false });
+    const { card, boards } = await lockCard(tx, cardId, { actor: ctx.actor, lockLists: false });
     assertBoardWritable(boards.get(card.boardId));
     const row = await insertComment(tx, {
       cardId: card.id,
@@ -104,6 +106,7 @@ export async function editComment(
   return cardTransaction(db, async (tx) => {
     const comment = await lockCommentForWrite(
       tx,
+      ctx.actor,
       commentId,
       (row) => row.authorId === ctx.actor.id,
       COMMENT_EDIT_FORBIDDEN_MESSAGE,
@@ -122,6 +125,7 @@ export async function deleteComment(
   await cardTransaction(db, async (tx) => {
     const comment = await lockCommentForWrite(
       tx,
+      ctx.actor,
       commentId,
       (row) => row.authorId === ctx.actor.id || ctx.actor.role === 'admin',
       COMMENT_DELETE_FORBIDDEN_MESSAGE,

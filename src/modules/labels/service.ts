@@ -4,6 +4,7 @@ import type { Database, DbExecutor } from '../../db/client';
 import type { BoardRow, CardRow, LabelRow } from '../../db/schema';
 import { AppError } from '../../lib/app-error';
 import { lockBoardsShared } from '../boards/repository';
+import type { CardActor } from '../cards/access';
 import { deleteCardLabel, findCardLabelIds, insertCardLabel } from '../cards/repository';
 import {
   assertBoardWritable,
@@ -123,10 +124,11 @@ export async function deleteLabel(db: Database, labelId: string): Promise<void> 
  */
 async function lockCardAndLabel(
   tx: DbExecutor,
+  actor: CardActor,
   cardId: string,
   labelId: string,
 ): Promise<{ card: CardRow; label: LabelRow }> {
-  const { card, boards } = await lockCard(tx, cardId, { lockLists: false });
+  const { card, boards } = await lockCard(tx, cardId, { actor, lockLists: false });
   const label = await findLabelById(tx, labelId);
   if (!label) throw labelNotFound();
   assertBoardWritable(boards.get(card.boardId));
@@ -138,9 +140,14 @@ async function lockCardAndLabel(
  * Idempotente; card arquivado é aceito (como no `PATCH` do card). Não gera atividade.
  * @returns `labelIds` do card, por nome da etiqueta.
  */
-export async function applyLabel(db: Database, cardId: string, labelId: string): Promise<string[]> {
+export async function applyLabel(
+  db: Database,
+  actor: CardActor,
+  cardId: string,
+  labelId: string,
+): Promise<string[]> {
   return cardTransaction(db, async (tx) => {
-    const { card, label } = await lockCardAndLabel(tx, cardId, labelId);
+    const { card, label } = await lockCardAndLabel(tx, actor, cardId, labelId);
     if (label.boardId !== card.boardId) {
       throw new AppError('LABEL_BOARD_MISMATCH', LABEL_BOARD_MISMATCH_MESSAGE);
     }
@@ -155,11 +162,12 @@ export async function applyLabel(db: Database, cardId: string, labelId: string):
  */
 export async function removeLabel(
   db: Database,
+  actor: CardActor,
   cardId: string,
   labelId: string,
 ): Promise<string[]> {
   return cardTransaction(db, async (tx) => {
-    const { card, label } = await lockCardAndLabel(tx, cardId, labelId);
+    const { card, label } = await lockCardAndLabel(tx, actor, cardId, labelId);
     await deleteCardLabel(tx, card.id, label.id);
     return findCardLabelIds(tx, card.id);
   });

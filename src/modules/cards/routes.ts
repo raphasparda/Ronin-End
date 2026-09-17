@@ -34,7 +34,7 @@ import {
 } from './service';
 
 function actionContext(app: Pick<App, 'clock'>, request: FastifyRequest): CardActionContext {
-  return { actorId: requireUser(request).id, now: app.clock() };
+  return { actor: requireUser(request), now: app.clock() };
 }
 
 /** Rotas de cards e atividade (api.md §11). Todas Auth, exceto `DELETE` (Admin). */
@@ -68,10 +68,12 @@ export const cardRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
         tags: ['cards'],
         summary: 'Detalhe do card (inclusive arquivado)',
         params: cardIdParamsSchema,
-        response: { 200: cardDetailResponseSchema, ...errorResponses(400, 401, 404) },
+        response: { 200: cardDetailResponseSchema, ...errorResponses(400, 401, 403, 404) },
       },
     },
-    async (request) => ({ card: await getCardDetail(app.db, request.params.cardId) }),
+    async (request) => ({
+      card: await getCardDetail(app.db, request.params.cardId, requireUser(request)),
+    }),
   );
 
   app.patch(
@@ -191,10 +193,12 @@ export const cardRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
         tags: ['cards'],
         summary: 'Histórico do card (até 500, mais recentes primeiro)',
         params: cardIdParamsSchema,
-        response: { 200: activitiesResponseSchema, ...errorResponses(400, 401, 404) },
+        response: { 200: activitiesResponseSchema, ...errorResponses(400, 401, 403, 404) },
       },
     },
-    async (request) => ({ activities: await getCardActivity(app.db, request.params.cardId) }),
+    async (request) => ({
+      activities: await getCardActivity(app.db, request.params.cardId, requireUser(request)),
+    }),
   );
 
   app.put(
