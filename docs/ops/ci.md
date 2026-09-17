@@ -13,7 +13,7 @@ Os E2E (Playwright) ficam no **ronin-web**: o CI de lá faz checkout deste repos
 
 ## Job `checks`
 
-checkout → pnpm (versão do `packageManager`) → Node do `.nvmrc` com cache do store → cria `kanban_test` → `pnpm install --frozen-lockfile` → `pnpm lint` → `pnpm typecheck` (API + shared) → `pnpm test` (shared com cobertura, depois API) → `pnpm build` (`dist/` do shared + `dist/server.js`) → `pnpm pack` do shared e checagem do conteúdo do tarball (tem `dist/index.js` e `dist/index.d.ts`; não tem `src/` nem testes). Tempo esperado: ~5 min.
+checkout → pnpm (versão do `packageManager`) → Node do `.nvmrc` com cache do store → cria `kanban_test` → `pnpm install --frozen-lockfile` → `pnpm lint` → `pnpm typecheck` (API + shared) → `pnpm test` (shared com cobertura, depois API) → `pnpm build` (`dist/` do shared + `dist/server.js` e `dist/migrate.js`) → `pnpm pack` do shared e checagem do conteúdo do tarball (tem `dist/index.js` e `dist/index.d.ts`; não tem `src/` nem testes). Tempo esperado: ~5 min.
 
 O job tem seu próprio serviço `postgres:18-alpine` (usuário/senha/banco `kanban`, porta 5432 do runner, healthcheck `pg_isready`). Os steps só começam depois que o serviço fica saudável.
 

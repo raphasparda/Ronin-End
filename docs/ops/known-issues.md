@@ -79,4 +79,6 @@ A revisão de segurança marcou estes itens como obrigatórios antes de colocar 
 3. **Headers e CSP no Caddy.** Configurar `Content-Security-Policy`, `Strict-Transport-Security`, `Referrer-Policy`, `X-Content-Type-Options` e `Permissions-Policy` conforme [`overview.md` §6.7](../architecture/overview.md#67-headers-e-demais-proteções), com HTTPS automático e HTTP redirecionando para HTTPS.
 4. ~~**Proteger a configuração inicial antes de abrir as portas.**~~ **Resolvido:** com `NODE_ENV=production` a API exige `SETUP_TOKEN`, e a tela "Configurar a equipe" só cria o Admin com esse código (`403 SETUP_TOKEN_INVALID` sem ele). Guarde o código fora do servidor e faça o setup logo depois do primeiro deploy ([`api.md` §18.6](../architecture/api.md#186-código-de-configuração-do-setup-v110)).
 
+No deploy no Render ([`deploy-render.md`](deploy-render.md)), os itens 2 e 3 não se aplicam do mesmo jeito: `NODE_ENV=production` vem do `render.yaml`, e os headers e a CSP do front ficam na configuração do Static Site (ronin-web). O item 1 tem uma limitação própria, descrita na seção 7 do guia.
+
 Os demais itens da Fatia 10 (backup fora da VPS com restauração testada, banco sem porta publicada, volta após reboot, documentação de instalação) estão em [`plan.md`](../architecture/plan.md#fatia-10-produção-em-vps-operação-e-fechamento-do-mvp).

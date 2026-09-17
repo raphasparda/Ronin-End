@@ -1,0 +1,41 @@
+# Blueprint do Render para a API (documental: os serviços são criados pela API do Render com estes
+# mesmos valores). Guia completo, variáveis e primeiro acesso: docs/ops/deploy-render.md.
+#
+# O front (ronin-web) é um Static Site separado, com rewrite de /api/* para este serviço, para que
+# navegador, cookie __Host- e CSRF vejam uma única origem (APP_ORIGIN = URL do Static Site).
+services:
+  - type: web
+    name: ronin-api
+    runtime: node
+    plan: free
+    region: virginia
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    # Aplica as migrations (dist/migrate.js) e sobe a API; se a migration falhar, a API não sobe.
+    startCommand: pnpm start:prod
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: '24'
+      - key: NODE_ENV
+        value: production
+      # O Render injeta PORT; a API escuta em HOST:PORT.
+      - key: HOST
+        value: 0.0.0.0
+      # Neon, conexão direta (sem pooler), com ?sslmode=require. Segredo: definir no painel.
+      - key: DATABASE_URL
+        sync: false
+      # Código do setup inicial (16 a 200 caracteres). Obrigatório em produção. Segredo.
+      - key: SETUP_TOKEN
+        sync: false
+      # URL https:// do Static Site do front, só a origem (sem barra final).
+      - key: APP_ORIGIN
+        sync: false
+      # Número de saltos: confia só no proxy do Render que conecta na API (não forjável). Veja a
+      # limitação em docs/ops/deploy-render.md antes de mudar; nunca use true.
+      - key: TRUST_PROXY
+        value: '1'
+      # Neon free: poucas conexões bastam para uma instância.
+      - key: DATABASE_POOL_MAX
+        value: '5'
+      - key: LOG_LEVEL
+        value: info

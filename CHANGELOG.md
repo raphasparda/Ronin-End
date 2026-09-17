@@ -8,6 +8,13 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/). O
 
 Entrega das Fatias 0 a 9 do MVP, na branch `feat/mvp-fatias-2-9`. A Fatia 10 (produção em VPS, backup e revisão final) ainda está pendente: veja [`docs/ops/known-issues.md`](docs/ops/known-issues.md).
 
+### Deploy no Render e Neon
+
+- `render.yaml` (documental) do Web Service `ronin-api`: plano Free, região Virginia, Node 24, build com `pnpm build`, start com `pnpm start:prod` e health check em `/api/health`. Guia em [`docs/ops/deploy-render.md`](docs/ops/deploy-render.md): arquitetura com Static Site e rewrite de `/api/*`, Neon com `sslmode=require`, variáveis, primeiro acesso, limites do plano gratuito e a limitação do `TRUST_PROXY` atrás do proxy do Render.
+- Setup inicial protegido por código: variável `SETUP_TOKEN` (16 a 200 caracteres), obrigatória com `NODE_ENV=production`. `GET /api/setup/status` informa `requiresSetupToken`; `POST /api/setup` aceita `setupToken` e, sem o código certo, responde `403 SETUP_TOKEN_INVALID` ("Código de configuração inválido."). Novo código de erro no `@raphasparda/ronin-shared` ([`api.md` §18.6](docs/architecture/api.md#186-código-de-configuração-do-setup-v110)).
+- `TRUST_PROXY` aceita, além de `true`/`false`, número de saltos (ex.: `1`) e lista de IPs/CIDRs separados por vírgula.
+- Migrations em produção sem `tsx`: o build gera `dist/migrate.js` (pasta `drizzle/` do diretório atual ou `MIGRATIONS_DIR`), e `pnpm start:prod` aplica as migrations antes de subir a API.
+
 ### Alterado
 
 - Monorepo dividido em dois repositórios, com histórico preservado ([ADR 0014](docs/architecture/adr/0014-dois-repositorios-e-shared-publicado.md)): **ronin-api** (`raphasparda/Ronin-End`: API na raiz, `packages/shared`, banco local de dev, docs de produto, arquitetura e operação) e **ronin-web** (`raphasparda/Ronin-front`: SPA, E2E e docs de design).

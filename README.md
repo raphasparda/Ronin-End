@@ -8,7 +8,7 @@
 ![Fastify](https://img.shields.io/badge/Fastify-5-000000?logo=fastify&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-18-4169E1?logo=postgresql&logoColor=white)
 
-> **English summary.** Ronin is a self-hosted, board-based task manager for small teams, in the spirit of Trello and ClickUp. This repository holds the REST API (Node 24, Fastify 5, PostgreSQL 18, Drizzle) and the shared Zod contracts package used by the [web client](https://github.com/raphasparda/Ronin-front). Highlights: Argon2id with httpOnly session cookies and CSRF checks, a race-free login throttle, fractional ordering with ordered row locks and concurrency tests, an append-only activity log enforced by a database trigger, and a zero-config local PostgreSQL for development. 745 automated tests. Documentation is in Brazilian Portuguese.
+> **English summary.** Ronin is a self-hosted, board-based task manager for small teams, in the spirit of Trello and ClickUp. This repository holds the REST API (Node 24, Fastify 5, PostgreSQL 18, Drizzle) and the shared Zod contracts package used by the [web client](https://github.com/raphasparda/Ronin-front). Highlights: Argon2id with httpOnly session cookies and CSRF checks, a race-free login throttle, fractional ordering with ordered row locks and concurrency tests, an append-only activity log enforced by a database trigger, and a zero-config local PostgreSQL for development. 795 automated tests. Documentation is in Brazilian Portuguese.
 
 O Ronin é um app de tarefas em quadros, no estilo Trello e ClickUp, para uma equipe pequena rodar no próprio servidor, com backend e dados próprios. Este repositório tem a **API REST** e o pacote de **contratos compartilhados** com o front.
 
@@ -23,6 +23,7 @@ O Ronin é um app de tarefas em quadros, no estilo Trello e ClickUp, para uma eq
 - [Scripts](#scripts)
 - [Testes](#testes)
 - [Estrutura do projeto](#estrutura-do-projeto)
+- [Deploy](#deploy)
 - [Documentação e API](#documentação-e-api)
 - [Status e roadmap](#status-e-roadmap)
 - [Autor](#autor)
@@ -37,7 +38,8 @@ Cada item aponta para o código ou o documento da decisão.
 - **CSRF por `Origin` + header próprio**: toda mutação exige `Origin` igual ao `APP_ORIGIN` e o header `X-Kanban-Csrf: 1` ([`src/plugins/csrf.ts`](src/plugins/csrf.ts)).
 - **Bloqueio de login atômico, resistente a concorrência**: a tentativa é reservada num único `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` antes do Argon2. Um teste dispara 30 logins paralelos com senha errada e confere que no máximo 5 chegam à verificação ([`src/modules/auth`](src/modules/auth)).
 - **Links revogados quando um Admin perde o poder**: rebaixar, desativar ou anonimizar um Admin revoga, na mesma transação, os convites e links de redefinição pendentes criados por ele ([`src/modules/users/service.ts`](src/modules/users/service.ts)).
-- **Configuração estrita para produção**: a API não sobe com `NODE_ENV=production` e `APP_ORIGIN` em `http://`, nem com `APP_ORIGIN` em `https://` fora de produção ([`src/config/env.ts`](src/config/env.ts)).
+- **Configuração estrita para produção**: a API não sobe com `NODE_ENV=production` e `APP_ORIGIN` em `http://`, nem com `APP_ORIGIN` em `https://` fora de produção, nem em produção sem `SETUP_TOKEN` ([`src/config/env.ts`](src/config/env.ts)).
+- **Setup inicial protegido por código**: com `SETUP_TOKEN`, a primeira conta Admin só é criada com o código certo, comparado em tempo constante antes de qualquer consulta ou hash ([`src/modules/setup`](src/modules/setup)).
 - **Logs sem dados sensíveis**: cookies, `authorization`, senhas e tokens são omitidos, e erros de banco saem sem valores de parâmetros ([`src/logger.ts`](src/logger.ts)).
 - **Anonimização de conta (LGPD)**: apaga e-mail e hash de senha de uma conta desativada e mantém cards, comentários e histórico como "Usuário removido". `CHECK`s no banco garantem o estado ([`docs/architecture/overview.md`](docs/architecture/overview.md)).
 
@@ -200,9 +202,9 @@ pnpm test
 
 | Suíte                       | Arquivos | Testes  | Observação                                                 |
 | --------------------------- | -------- | ------- | ---------------------------------------------------------- |
-| `@raphasparda/ronin-shared` | 17       | 351     | schemas e regras de domínio; cobertura de 100% das linhas  |
-| API                         | 45       | 394     | integração com `app.inject` e PostgreSQL real, e unitários |
-| **Total**                   | **62**   | **745** |                                                            |
+| `@raphasparda/ronin-shared` | 17       | 352     | schemas e regras de domínio; cobertura de 100% das linhas  |
+| API                         | 46       | 443     | integração com `app.inject` e PostgreSQL real, e unitários |
+| **Total**                   | **63**   | **795** |                                                            |
 
 - O mínimo de cobertura exigido no shared é 95% em `domain/`.
 - As rotas são testadas para sucesso, 401, CSRF, validação, 404, permissões e conflitos (409), além das regras de negócio e dos cenários de concorrência.
@@ -229,6 +231,12 @@ infra/postgres/    SQL das alternativas Docker e PostgreSQL nativo
 docs/              produto, arquitetura (ADRs) e operação
 ```
 
+## Deploy
+
+O caminho de baixo custo é o **Render** (Web Service Free para a API, Static Site para o front com rewrite de `/api/*`, mesma origem) com PostgreSQL no **Neon**. O [`render.yaml`](render.yaml) documenta o serviço da API; o passo a passo, as variáveis, o `SETUP_TOKEN` do primeiro acesso e os limites do plano gratuito estão em [`docs/ops/deploy-render.md`](docs/ops/deploy-render.md).
+
+Resumo: build `corepack enable && pnpm install --frozen-lockfile && pnpm build`, start `pnpm start:prod` (migrations e servidor), health check `/api/health`. Em produção a API não sobe sem `APP_ORIGIN` em `https://` e sem `SETUP_TOKEN`.
+
 ## Documentação e API
 
 Com a API rodando em desenvolvimento, a documentação **OpenAPI interativa** fica em <http://127.0.0.1:3000/api/docs>. Em produção ela fica desligada.
@@ -242,6 +250,7 @@ Com a API rodando em desenvolvimento, a documentação **OpenAPI interativa** fi
 | [`docs/architecture/adr/`](docs/architecture/adr/)               | decisões de arquitetura (ADRs)                              |
 | [`docs/ops/setup-local.md`](docs/ops/setup-local.md)             | ambiente local em detalhe e problemas comuns                |
 | [`docs/ops/ci.md`](docs/ops/ci.md)                               | pipelines do GitHub Actions                                 |
+| [`docs/ops/deploy-render.md`](docs/ops/deploy-render.md)         | deploy no Render (plano Free) com PostgreSQL no Neon        |
 | [`docs/ops/shared-package.md`](docs/ops/shared-package.md)       | build, publicação e consumo do `@raphasparda/ronin-shared`  |
 | [`docs/ops/known-issues.md`](docs/ops/known-issues.md)           | problemas conhecidos e pendências do deploy                 |
 | [`CHANGELOG.md`](CHANGELOG.md)                                   | histórico de entregas                                       |
