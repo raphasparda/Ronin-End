@@ -1,6 +1,6 @@
 # Ronin — Kanban da equipe: escopo do MVP
 
-> Documento de produto. As decisões de stack e deploy tomadas pelo cliente estão registradas em "Decisões confirmadas". Os detalhes técnicos ficam com a arquitetura e o visual com o design.
+> Documento de produto. As decisões de stack e deploy tomadas pelo cliente estão registradas em "Decisões confirmadas". Os detalhes técnicos ficam em `docs/architecture/` e o visual no design system do ronin-web (`docs/design/`).
 > Status: rascunho v2 (2026-09-16). Autor: Raphael Sparda.
 > v2: gamificação removida (entrou por engano, vinha de outro projeto do cliente); visual colorido estilo Monday; deploy em VPS; cor por lista e prioridade do card incluídas.
 
@@ -33,6 +33,15 @@ O cliente quer uma ferramenta de gestão de tarefas em quadros, no estilo Trello
 **Frequência:** uso diário. Cada membro abre a ferramenta várias vezes por dia para ver o que tem para fazer e atualizar o andamento.
 
 **Proposta de valor do MVP:** um kanban simples, rápido e **colorido** (fácil de ler de relance, como o Monday), com dados próprios. Ele responde três perguntas: *o que eu tenho que fazer?*, *em que pé está cada coisa?* e *quem está com o quê?*.
+
+**Princípios de produto** (guiam o que entra e como a interface se comporta):
+
+1. **Leitura de relance.** Situação, urgência e responsável aparecem numa olhada no quadro.
+2. **Equipe pequena, ferramenta pequena.** Cada função precisa se justificar para uma equipe de até cinco pessoas; o resto fica para depois.
+3. **Dados da equipe, servidor da equipe.** Auto-hospedado, sem serviços de terceiros no caminho dos dados.
+4. **Atualizar sem atrito.** Criar, mover e concluir um card leva segundos.
+5. **Sem mecânica de pressão.** Nada de gamificação ou comparação entre pessoas.
+6. **Cor nunca sozinha.** Prioridade, prazo e status da lista sempre têm texto ou ícone além da cor (RN17).
 
 ## 2. Personas
 

@@ -446,7 +446,7 @@ De outro usuário → `404 NOT_FOUND`. Idempotente. 204.
 | excluir comentário | | | x | x |
 | notificações (só as próprias) | | x | | |
 
-## 17. Testes de contrato obrigatórios (QA)
+## 17. Testes de contrato obrigatórios
 
 Para cada rota: sucesso; `401` sem sessão (exceto públicas); `403 CSRF_REJECTED` em mutação sem header ou com `Origin` estranho; `400` com corpo inválido; `404` com id inexistente; `403` quando a matriz restringe; os `409` listados na rota. Além disso, os testes de regra de negócio listados em `plan.md`.
 

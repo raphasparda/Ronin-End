@@ -743,7 +743,7 @@ Envelope único (schema `errorResponseSchema` no shared):
   - `VALIDATION_ERROR` → formulários mapeiam `details[].path` para os campos.
 - Mensagens para o usuário em pt-BR, sem detalhes internos.
 
-## 9. Frontend (diretrizes para o frontend)
+## 9. Frontend (diretrizes)
 
 - Rotas: `/setup`, `/login`, `/convite`, `/redefinir-senha`, `/` (quadros), `/quadros/arquivados`, `/b/:boardId`, `/b/:boardId/c/:cardId` (detalhe como diálogo sobre o quadro; URL compartilhável), `/meus-cards`, `/perfil`, `/admin/membros`, `/admin/convites`, `/admin/workspace`.
 - Boot: `GET /api/setup/status`; se `needsSetup` → `/setup`. Senão `GET /api/auth/me`; 401 → `/login`.

@@ -11,6 +11,7 @@ O cliente decidiu separar o monorepo (`apps/api`, `apps/web`, `packages/shared`)
 ## Decisão
 
 - **ronin-api** (workspace pnpm): API na raiz (`src`, `test`, `drizzle`), `packages/shared`, `scripts/` (PostgreSQL local de dev), `infra/`, docs de arquitetura, produto e operação. A API consome o shared pelo workspace (`workspace:*`), lendo a fonte TS; o `tsup` da API embute o shared no bundle.
+- **ronin-web**: SPA na raiz (`src`, `public`, `e2e`) e docs de design.
 - **`@raphasparda/ronin-shared`** vira pacote publicável no GitHub Packages, versão inicial `0.1.0`:
   - no repositório, `exports` aponta para `src/` (sem build no dia a dia);
   - `pnpm pack`/`publish` roda `tsup` (ESM + `.d.ts`) e troca `exports`/`types` pelos de `publishConfig` (apontando para `dist/`); `files: ["dist"]`;
