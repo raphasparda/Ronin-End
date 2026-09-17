@@ -28,7 +28,13 @@ export const listRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
       },
     },
     async (request, reply) => {
-      const list = await createList(app.db, request.params.boardId, request.body, app.clock());
+      const list = await createList(
+        app.db,
+        requireUser(request),
+        request.params.boardId,
+        request.body,
+        app.clock(),
+      );
       return reply.status(201).send({ list });
     },
   );
@@ -47,7 +53,7 @@ export const listRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
     (request) =>
       updateList(
         app.db,
-        { actorId: requireUser(request).id, now: app.clock() },
+        { actor: requireUser(request), now: app.clock() },
         request.params.listId,
         request.body,
       ),
@@ -65,7 +71,13 @@ export const listRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
       },
     },
     async (request) => ({
-      list: await moveList(app.db, request.params.listId, request.body.placement, app.clock()),
+      list: await moveList(
+        app.db,
+        requireUser(request),
+        request.params.listId,
+        request.body.placement,
+        app.clock(),
+      ),
     }),
   );
 
@@ -79,7 +91,9 @@ export const listRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
         response: { 200: listResponseSchema, ...errorResponses(400, 401, 403, 404, 409) },
       },
     },
-    async (request) => ({ list: await archiveList(app.db, request.params.listId, app.clock()) }),
+    async (request) => ({
+      list: await archiveList(app.db, requireUser(request), request.params.listId, app.clock()),
+    }),
   );
 
   app.post(
@@ -92,7 +106,9 @@ export const listRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
         response: { 200: listResponseSchema, ...errorResponses(400, 401, 403, 404, 409) },
       },
     },
-    async (request) => ({ list: await restoreList(app.db, request.params.listId, app.clock()) }),
+    async (request) => ({
+      list: await restoreList(app.db, requireUser(request), request.params.listId, app.clock()),
+    }),
   );
 
   done();

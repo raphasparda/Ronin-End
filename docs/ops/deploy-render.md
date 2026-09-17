@@ -57,6 +57,10 @@ Valores do [`render.yaml`](../../render.yaml). Os marcados como segredo (`sync: 
 | `SETUP_TOKEN` | segredo | código do setup inicial, 16 a 200 caracteres (seção 4) |
 | `APP_ORIGIN` | segredo (`sync: false`) | origem do Static Site, ex.: `https://ronin-web.onrender.com`, sem barra final |
 | `TRUST_PROXY` | `1` | número de saltos; leia a seção 7 antes de mudar |
+| `R2_ACCOUNT_ID` | segredo | conta do Cloudflare R2; capa do quadro (as quatro juntas ou nenhuma) |
+| `R2_BUCKET` | `ronin-cards` | bucket privado das capas |
+| `R2_ACCESS_KEY_ID` | segredo | token do R2 com escopo só nesse bucket |
+| `R2_SECRET_ACCESS_KEY` | segredo | par do anterior; sem essas quatro, `features.boardCovers` vem `false` |
 | `DATABASE_POOL_MAX` | `5` | sugerido para o Neon Free (padrão da API: 10) |
 | `LOG_LEVEL` | `info` | logs JSON (pino) no painel do Render |
 

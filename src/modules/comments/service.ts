@@ -4,7 +4,7 @@ import type { Database, DbExecutor } from '../../db/client';
 import type { CommentRow } from '../../db/schema';
 import { AppError } from '../../lib/app-error';
 import { toIso, toIsoOrNull } from '../../lib/dates';
-import type { CardActor } from '../cards/access';
+import type { BoardActor } from '../boards/access';
 import { assertBoardWritable, cardTransaction, lockCard } from '../cards/service';
 import { onCommented } from '../notifications/hooks';
 
@@ -48,7 +48,7 @@ function notFound(): AppError {
  */
 async function lockCommentForWrite(
   tx: DbExecutor,
-  actor: CardActor,
+  actor: BoardActor,
   commentId: string,
   canWrite: (comment: CommentRow) => boolean,
   forbiddenMessage: string,

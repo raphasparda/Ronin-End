@@ -7,8 +7,8 @@ import type { App } from '../app';
  * e vão nas respostas de sessão (setup, login, aceite de convite e `auth/me`), que é o que a SPA
  * lê no boot (api.md §18.7 item 57).
  *
- * `cardCovers`: capa do card, ligada só quando o R2 está configurado (ADR 0016, overview.md §6.9).
+ * `boardCovers`: capa do quadro, ligada só quando o R2 está configurado (ADR 0016, overview.md §6.9).
  */
 export function appFeatures(app: Pick<App, 'coverStorage'>): Features {
-  return { cardCovers: app.coverStorage !== null };
+  return { boardCovers: app.coverStorage !== null };
 }

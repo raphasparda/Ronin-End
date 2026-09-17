@@ -80,7 +80,7 @@ declare module 'fastify' {
     passwords: PasswordHasher;
     /**
      * Bucket das capas de card (Fatia 11, ADR 0016) ou `null` sem R2 configurado. Com `null`,
-     * `features.cardCovers` é `false` e as rotas de capa respondem `503`.
+     * `features.boardCovers` é `false` e as rotas de capa respondem `503`.
      */
     coverStorage: R2Client | null;
   }

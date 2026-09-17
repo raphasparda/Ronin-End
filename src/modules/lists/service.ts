@@ -11,6 +11,7 @@ import type { Database, DbExecutor } from '../../db/client';
 import type { BoardRow, ListRow } from '../../db/schema';
 import { AppError } from '../../lib/app-error';
 import { computePosition, LIST_SIBLINGS } from '../../lib/ordering';
+import type { BoardActor } from '../boards/access';
 import { lockWritableBoard, toList } from '../boards/service';
 import { completeOpenCardsInList } from '../completion/service';
 
@@ -38,10 +39,11 @@ function notFound(): AppError {
 async function lockListForWrite(
   tx: DbExecutor,
   listId: string,
+  actor: BoardActor,
 ): Promise<{ board: BoardRow; list: ListRow }> {
   const found = await findListById(tx, listId);
   if (!found) throw notFound();
-  const board = await lockWritableBoard(tx, found.boardId);
+  const board = await lockWritableBoard(tx, found.boardId, actor);
   const list = await lockListById(tx, listId);
   if (!list) throw notFound();
   return { board, list };
@@ -53,12 +55,13 @@ async function lockListForWrite(
  */
 export async function createList(
   db: Database,
+  actor: BoardActor,
   boardId: string,
   input: CreateListRequest,
   now: Date,
 ): Promise<List> {
   return db.transaction(async (tx) => {
-    await lockWritableBoard(tx, boardId);
+    await lockWritableBoard(tx, boardId, actor);
     const color =
       input.color ?? nextPaletteColor((await findLastActiveList(tx, boardId))?.color ?? null);
     const position = await computePosition(tx, LIST_SIBLINGS, boardId, input.placement, null);
@@ -75,7 +78,7 @@ export async function createList(
 }
 
 export interface UpdateListContext {
-  actorId: string;
+  actor: BoardActor;
   now: Date;
 }
 
@@ -94,7 +97,7 @@ export async function updateList(
   input: UpdateListRequest,
 ): Promise<UpdateListResponse> {
   return db.transaction(async (tx) => {
-    const { board, list } = await lockListForWrite(tx, listId);
+    const { board, list } = await lockListForWrite(tx, listId, ctx.actor);
     if (input.isDoneList === true && list.archivedAt !== null) {
       throw new AppError('LIST_ARCHIVED', LIST_ARCHIVED_MESSAGE);
     }
@@ -116,7 +119,7 @@ export async function updateList(
       ? await completeOpenCardsInList(tx, {
           boardId: board.id,
           listId: list.id,
-          actorId: ctx.actorId,
+          actorId: ctx.actor.id,
           now: ctx.now,
         })
       : [];
@@ -129,12 +132,13 @@ export async function updateList(
 /** `POST /api/lists/:listId/move { placement }` (mesmo quadro). Lista arquivada → 409. */
 export async function moveList(
   db: Database,
+  actor: BoardActor,
   listId: string,
   placement: Placement,
   now: Date,
 ): Promise<List> {
   return db.transaction(async (tx) => {
-    const { board, list } = await lockListForWrite(tx, listId);
+    const { board, list } = await lockListForWrite(tx, listId, actor);
     if (list.archivedAt !== null) throw new AppError('LIST_ARCHIVED', LIST_ARCHIVED_MESSAGE);
     const position = await computePosition(tx, LIST_SIBLINGS, board.id, placement, list.id);
     return toList(await updateListById(tx, list.id, { position, updatedAt: now }));
@@ -145,9 +149,14 @@ export async function moveList(
  * `POST /api/lists/:listId/archive`. Desmarca `isDoneList` no mesmo `UPDATE` (o banco recusa lista
  * de conclusão arquivada). Cards não mudam. Idempotente.
  */
-export async function archiveList(db: Database, listId: string, now: Date): Promise<List> {
+export async function archiveList(
+  db: Database,
+  actor: BoardActor,
+  listId: string,
+  now: Date,
+): Promise<List> {
   return db.transaction(async (tx) => {
-    const { list } = await lockListForWrite(tx, listId);
+    const { list } = await lockListForWrite(tx, listId, actor);
     if (list.archivedAt !== null) return toList(list);
     return toList(
       await updateListById(tx, list.id, { archivedAt: now, isDoneList: false, updatedAt: now }),
@@ -156,9 +165,14 @@ export async function archiveList(db: Database, listId: string, now: Date): Prom
 }
 
 /** `POST /api/lists/:listId/restore`: volta no **fim** do quadro (nova posição). Idempotente. */
-export async function restoreList(db: Database, listId: string, now: Date): Promise<List> {
+export async function restoreList(
+  db: Database,
+  actor: BoardActor,
+  listId: string,
+  now: Date,
+): Promise<List> {
   return db.transaction(async (tx) => {
-    const { board, list } = await lockListForWrite(tx, listId);
+    const { board, list } = await lockListForWrite(tx, listId, actor);
     if (list.archivedAt === null) return toList(list);
     const position = await computePosition(tx, LIST_SIBLINGS, board.id, { type: 'end' }, list.id);
     return toList(

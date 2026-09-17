@@ -63,11 +63,6 @@ describeDb('recordActivity (kanban_test)', () => {
       { ...base, type: 'card_reopened', data: {} },
       { ...base, type: 'card_archived', data: {} },
       { ...base, type: 'card_restored', data: {} },
-      { ...base, type: 'card_visibility_changed', data: { from: 'team', to: 'restricted' } },
-      { ...base, type: 'card_viewer_added', data: { userId: user.id } },
-      { ...base, type: 'card_viewer_removed', data: { userId: user.id } },
-      { ...base, type: 'card_cover_changed', data: {} },
-      { ...base, type: 'card_cover_removed', data: {} },
     ];
     await db().transaction(async (tx) => {
       for (const entry of entries) await recordActivity(tx, entry);

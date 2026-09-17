@@ -1,34 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  ID,
-  T0,
-  activity,
-  cardCover,
-  cardDetail,
-  cardSummary,
-  issuePaths,
-  label,
-  lockedCard,
-} from '../test-fixtures';
+import { ID, T0, activity, cardDetail, cardSummary, issuePaths, label } from '../test-fixtures';
 import { ACTIVITY_TYPES, activitiesResponseSchema, activitySchema } from './activity';
 import type { ActivityEntry } from './activity';
 import {
-  boardCardSchema,
   cardAssigneeParamsSchema,
   cardAssigneesResponseSchema,
-  cardCoverUploadUrlRequestSchema,
   cardDetailResponseSchema,
   cardMutationResultSchema,
   cardSummaryResponseSchema,
-  cardViewerParamsSchema,
-  cardViewersResponseSchema,
-  confirmCardCoverRequestSchema,
   createCardRequestSchema,
-  lockedCardSchema,
   moveCardRequestSchema,
   updateCardRequestSchema,
-  updateCardVisibilityRequestSchema,
 } from './cards';
 import {
   cardLabelParamsSchema,
@@ -142,118 +125,6 @@ describe('cards: saída', () => {
   });
 });
 
-describe('cards restritos e capa (Fatia 11)', () => {
-  const objectKey = `covers/${ID.card}/abcdefghijklmnopqrstuvwxyz012345`;
-
-  it('BoardCard discrimina pelos dois valores de locked', () => {
-    expect(boardCardSchema.parse(cardSummary)).toEqual(cardSummary);
-    expect(boardCardSchema.parse(lockedCard)).toEqual(lockedCard);
-    // Sem o discriminante não é nenhum dos dois formatos.
-    const { locked: _locked, ...semDiscriminante } = cardSummary;
-    expect(boardCardSchema.safeParse(semDiscriminante).success).toBe(false);
-    expect(boardCardSchema.safeParse({ ...lockedCard, locked: false }).success).toBe(false);
-  });
-
-  it('LockedCard descarta qualquer campo além dos cinco declarados', () => {
-    const vazando = {
-      ...lockedCard,
-      dueAt: T0,
-      priority: 'urgent',
-      labelIds: [ID.label],
-      assigneeIds: [ID.user],
-      cover: cardCover,
-      description: 'segredo',
-      boardId: ID.board,
-    };
-    const parsed = boardCardSchema.parse(vazando);
-    expect(parsed).toEqual(lockedCard);
-    expect(Object.keys(parsed).sort()).toEqual(['id', 'listId', 'locked', 'position', 'title']);
-    expect(JSON.stringify(parsed)).not.toContain('segredo');
-    expect(lockedCardSchema.parse(vazando)).toEqual(lockedCard);
-  });
-
-  it('face do card traz visibilidade e capa (null sem capa)', () => {
-    expect(cardSummaryResponseSchema.parse({ card: cardSummary }).card.cover).toEqual(cardCover);
-    const semCapa = { ...cardSummary, cover: null, visibility: 'restricted' } as const;
-    expect(cardSummaryResponseSchema.parse({ card: semCapa }).card).toEqual(semCapa);
-    expect(
-      cardSummaryResponseSchema.safeParse({ card: { ...cardSummary, visibility: 'privado' } })
-        .success,
-    ).toBe(false);
-  });
-
-  it('detalhe traz viewerIds', () => {
-    const restrito = { ...cardDetail, visibility: 'restricted', viewerIds: [ID.user, ID.user2] };
-    expect(cardDetailResponseSchema.parse({ card: restrito }).card.viewerIds).toEqual([
-      ID.user,
-      ID.user2,
-    ]);
-    const { viewerIds: _viewerIds, ...semViewerIds } = cardDetail;
-    expect(cardDetailResponseSchema.safeParse({ card: semViewerIds }).success).toBe(false);
-  });
-
-  it('visibilidade e viewers: corpo e resposta', () => {
-    expect(updateCardVisibilityRequestSchema.parse({ visibility: 'team' })).toEqual({
-      visibility: 'team',
-    });
-    expect(updateCardVisibilityRequestSchema.safeParse({ visibility: 'privado' }).success).toBe(
-      false,
-    );
-    expect(cardViewerParamsSchema.parse({ cardId: ID.card, userId: ID.user })).toEqual({
-      cardId: ID.card,
-      userId: ID.user,
-    });
-    expect(issuePaths(cardViewerParamsSchema.safeParse({ cardId: ID.card, userId: 'x' }))).toEqual([
-      'userId',
-    ]);
-    expect(cardViewersResponseSchema.parse({ viewerIds: [ID.user] })).toEqual({
-      viewerIds: [ID.user],
-    });
-  });
-
-  it('URL de upload: tipo na lista e tamanho de 1 a 5 MiB', () => {
-    expect(
-      cardCoverUploadUrlRequestSchema.parse({ contentType: 'image/avif', sizeBytes: 5_242_880 }),
-    ).toEqual({ contentType: 'image/avif', sizeBytes: 5_242_880 });
-    expect(
-      issuePaths(
-        cardCoverUploadUrlRequestSchema.safeParse({ contentType: 'image/gif', sizeBytes: 10 }),
-      ),
-    ).toEqual(['contentType']);
-    expect(
-      issuePaths(
-        cardCoverUploadUrlRequestSchema.safeParse({
-          contentType: 'image/png',
-          sizeBytes: 5_242_881,
-        }),
-      ),
-    ).toEqual(['sizeBytes']);
-    expect(
-      issuePaths(
-        cardCoverUploadUrlRequestSchema.safeParse({ contentType: 'image/png', sizeBytes: 0 }),
-      ),
-    ).toEqual(['sizeBytes']);
-  });
-
-  it('confirmação: chave no formato de capa e dimensões opcionais', () => {
-    expect(confirmCardCoverRequestSchema.parse({ objectKey })).toEqual({ objectKey });
-    expect(confirmCardCoverRequestSchema.parse({ objectKey, width: 800, height: 600 })).toEqual({
-      objectKey,
-      width: 800,
-      height: 600,
-    });
-    expect(issuePaths(confirmCardCoverRequestSchema.safeParse({ objectKey: 'covers/x' }))).toEqual([
-      'objectKey',
-    ]);
-    expect(
-      issuePaths(confirmCardCoverRequestSchema.safeParse({ objectKey, width: 20_001 })),
-    ).toEqual(['width']);
-    expect(issuePaths(confirmCardCoverRequestSchema.safeParse({ objectKey, height: 0 }))).toEqual([
-      'height',
-    ]);
-  });
-});
-
 describe('etiquetas', () => {
   it('criar exige nome (1–50) e cor da paleta', () => {
     expect(createLabelRequestSchema.parse({ name: ' Urgente ', color: 'red' })).toEqual({
@@ -274,8 +145,8 @@ describe('etiquetas', () => {
 });
 
 describe('atividade', () => {
-  it('tem os 16 tipos de overview.md §5.3', () => {
-    expect(ACTIVITY_TYPES).toHaveLength(16);
+  it('tem os 11 tipos de overview.md §5.3', () => {
+    expect(ACTIVITY_TYPES).toHaveLength(11);
     expect(activitySchema.options).toHaveLength(ACTIVITY_TYPES.length);
   });
 
@@ -293,11 +164,6 @@ describe('atividade', () => {
       { type: 'card_reopened', data: {} },
       { type: 'card_archived', data: {} },
       { type: 'card_restored', data: {} },
-      { type: 'card_visibility_changed', data: { from: 'team', to: 'restricted' } },
-      { type: 'card_viewer_added', data: { userId: ID.user2 } },
-      { type: 'card_viewer_removed', data: { userId: ID.user2 } },
-      { type: 'card_cover_changed', data: {} },
-      { type: 'card_cover_removed', data: {} },
     ];
     const activities = entries.map((entry) => ({ ...base, type: entry.type, data: entry.data }));
     expect(activitiesResponseSchema.parse({ activities })).toEqual({ activities });

@@ -11,7 +11,6 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { expectError, MISSING_ID, seedTeam, type Actor } from '../../../test/actors';
-import { unlockedCard } from '../../../test/cards';
 import { csrfHeaders } from '../../../test/app';
 import { createDbTestApp, createTestClock } from '../../../test/auth';
 import { describeDb, useTestDatabase } from '../../../test/db';
@@ -296,7 +295,7 @@ describeDb('rotas de checklists (kanban_test)', () => {
           })
         ).json(),
       );
-      expect(unlockedCard(payload.cards[0]).checklist).toEqual({ done: 2, total: 3 });
+      expect(payload.cards[0]?.checklist).toEqual({ done: 2, total: 3 });
 
       await patchItem(items[1]!.id, { isChecked: true });
       const full = await detail(card.id);

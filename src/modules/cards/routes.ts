@@ -2,33 +2,23 @@ import {
   activitiesResponseSchema,
   cardAssigneeParamsSchema,
   cardAssigneesResponseSchema,
-  cardCoverUploadUrlRequestSchema,
-  cardCoverUploadUrlResponseSchema,
   cardDetailResponseSchema,
   cardIdParamsSchema,
   cardMutationResultSchema,
   cardSummaryResponseSchema,
-  cardViewerParamsSchema,
-  cardViewersResponseSchema,
-  confirmCardCoverRequestSchema,
   createCardRequestSchema,
   listIdParamsSchema,
   moveCardRequestSchema,
   updateCardRequestSchema,
-  updateCardVisibilityRequestSchema,
 } from '@raphasparda/ronin-shared';
 import type { FastifyRequest } from 'fastify';
 import type { FastifyPluginCallbackZod } from 'fastify-type-provider-zod';
 
 import type { App } from '../../app';
 import { errorResponses, noContentSchema } from '../../lib/route-schemas';
-import { coverUploadUrlRateLimit } from '../../plugins/rate-limit';
 import { requireUser } from '../../plugins/session';
 
-import { confirmCardCover, createCoverUploadUrl, removeCardCover } from './cover';
-
 import {
-  addCardViewer,
   archiveCard,
   assignCard,
   changeCardCompletion,
@@ -37,19 +27,14 @@ import {
   getCardActivity,
   getCardDetail,
   moveCard,
-  removeCardViewer,
   restoreCard,
-  setCardVisibility,
   unassignCard,
   updateCard,
   type CardActionContext,
 } from './service';
 
-function actionContext(
-  app: Pick<App, 'clock' | 'coverStorage'>,
-  request: FastifyRequest,
-): CardActionContext {
-  return { actor: requireUser(request), now: app.clock(), coverStorage: app.coverStorage };
+function actionContext(app: Pick<App, 'clock'>, request: FastifyRequest): CardActionContext {
+  return { actor: requireUser(request), now: app.clock() };
 }
 
 /** Rotas de cards e atividade (api.md §11). Todas Auth, exceto `DELETE` (Admin). */
@@ -87,10 +72,7 @@ export const cardRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
       },
     },
     async (request) => ({
-      card: await getCardDetail(app.db, request.params.cardId, requireUser(request), {
-        storage: app.coverStorage,
-        now: app.clock(),
-      }),
+      card: await getCardDetail(app.db, request.params.cardId, requireUser(request)),
     }),
   );
 
@@ -199,13 +181,7 @@ export const cardRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
       },
     },
     async (request, reply) => {
-      await deleteCard(
-        app.db,
-        requireUser(request),
-        request.params.cardId,
-        app.coverStorage,
-        request.log,
-      );
+      await deleteCard(app.db, requireUser(request), request.params.cardId);
       return reply.status(204).send(null);
     },
   );
@@ -262,136 +238,6 @@ export const cardRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
         request.params.cardId,
         request.params.userId,
       ),
-    }),
-  );
-
-  app.put(
-    '/api/cards/:cardId/visibility',
-    {
-      schema: {
-        tags: ['cards'],
-        summary:
-          'Muda a visibilidade do card (equipe/restrito); restringir inclui ator e responsáveis',
-        params: cardIdParamsSchema,
-        body: updateCardVisibilityRequestSchema,
-        response: { 200: cardDetailResponseSchema, ...errorResponses(400, 401, 403, 404, 409) },
-      },
-    },
-    async (request) => ({
-      card: await setCardVisibility(
-        app.db,
-        actionContext(app, request),
-        request.params.cardId,
-        request.body.visibility,
-      ),
-    }),
-  );
-
-  app.put(
-    '/api/cards/:cardId/viewers/:userId',
-    {
-      schema: {
-        tags: ['cards'],
-        summary:
-          'Dá acesso ao card restrito (idempotente; card da equipe → 409 CARD_NOT_RESTRICTED)',
-        params: cardViewerParamsSchema,
-        response: { 200: cardViewersResponseSchema, ...errorResponses(400, 401, 403, 404, 409) },
-      },
-    },
-    async (request) => ({
-      viewerIds: await addCardViewer(
-        app.db,
-        actionContext(app, request),
-        request.params.cardId,
-        request.params.userId,
-      ),
-    }),
-  );
-
-  app.delete(
-    '/api/cards/:cardId/viewers/:userId',
-    {
-      schema: {
-        tags: ['cards'],
-        summary: 'Tira o acesso ao card restrito (idempotente; responsável do card → 409)',
-        params: cardViewerParamsSchema,
-        response: { 200: cardViewersResponseSchema, ...errorResponses(400, 401, 403, 404, 409) },
-      },
-    },
-    async (request) => ({
-      viewerIds: await removeCardViewer(
-        app.db,
-        actionContext(app, request),
-        request.params.cardId,
-        request.params.userId,
-      ),
-    }),
-  );
-
-  app.post(
-    '/api/cards/:cardId/cover/upload-url',
-    {
-      config: { rateLimit: coverUploadUrlRateLimit() },
-      schema: {
-        tags: ['cards'],
-        summary: 'URL assinada para enviar a capa direto ao R2 (5 min; não grava nada)',
-        params: cardIdParamsSchema,
-        body: cardCoverUploadUrlRequestSchema,
-        response: {
-          200: cardCoverUploadUrlResponseSchema,
-          ...errorResponses(400, 401, 403, 404, 409, 429, 503),
-        },
-      },
-    },
-    (request) =>
-      createCoverUploadUrl(
-        app.db,
-        actionContext(app, request),
-        request.params.cardId,
-        request.body,
-      ),
-  );
-
-  app.put(
-    '/api/cards/:cardId/cover',
-    {
-      schema: {
-        tags: ['cards'],
-        summary: 'Confirma a capa enviada (confere tipo, tamanho e assinatura do formato)',
-        params: cardIdParamsSchema,
-        body: confirmCardCoverRequestSchema,
-        response: {
-          200: cardDetailResponseSchema,
-          ...errorResponses(400, 401, 403, 404, 409, 503),
-        },
-      },
-    },
-    async (request) => ({
-      card: await confirmCardCover(
-        app.db,
-        actionContext(app, request),
-        request.params.cardId,
-        request.body,
-        request.log,
-      ),
-    }),
-  );
-
-  app.delete(
-    '/api/cards/:cardId/cover',
-    {
-      schema: {
-        tags: ['cards'],
-        summary: 'Remove a capa (objeto e linha; idempotente)',
-        params: cardIdParamsSchema,
-        response: {
-          200: cardDetailResponseSchema,
-          ...errorResponses(400, 401, 403, 404, 409, 503),
-        },
-      },
-    },
-    async (request) => ({
-      card: await removeCardCover(app.db, actionContext(app, request), request.params.cardId),
     }),
   );
 

@@ -4,8 +4,8 @@
  */
 import type { Activity } from './schemas/activity';
 import type { Invite } from './schemas/admin';
-import type { Board } from './schemas/boards';
-import type { CardCover, CardDetail, CardSummary, LockedCard } from './schemas/cards';
+import type { Board, BoardCover, BoardDetail, LockedBoard } from './schemas/boards';
+import type { CardDetail, CardSummary } from './schemas/cards';
 import type { Checklist } from './schemas/checklists';
 import type { Comment } from './schemas/comments';
 import type { Label } from './schemas/labels';
@@ -54,13 +54,28 @@ export const invite: Invite = {
   usedByUserId: null,
 };
 
+export const boardCover: BoardCover = {
+  url: 'https://bucket.exemplo/covers/x?X-Amz-Signature=abc',
+  width: 1600,
+  height: 900,
+  expiresAt: '2026-09-16T14:15:00.000Z',
+};
+
 export const board: Board = {
+  locked: false,
   id: ID.board,
   name: 'Marketing',
+  visibility: 'team',
+  cover: boardCover,
   archivedAt: null,
   createdAt: T0,
   updatedAt: T0,
 };
+
+export const boardDetail: BoardDetail = { ...board, viewerIds: [] };
+
+/** Quadro restrito para quem não tem acesso: são estes os únicos campos (ADR 0015). */
+export const lockedBoard: LockedBoard = { id: ID.board2, name: 'Diretoria', locked: true };
 
 export const list: List = {
   id: ID.list,
@@ -74,15 +89,7 @@ export const list: List = {
 
 export const label: Label = { id: ID.label, boardId: ID.board, name: 'Financeiro', color: 'green' };
 
-export const cardCover: CardCover = {
-  url: 'https://bucket.exemplo/covers/x?X-Amz-Signature=abc',
-  width: 1600,
-  height: 900,
-  expiresAt: '2026-09-16T14:15:00.000Z',
-};
-
 export const cardSummary: CardSummary = {
-  locked: false,
   id: ID.card,
   boardId: ID.board,
   listId: ID.list,
@@ -98,18 +105,7 @@ export const cardSummary: CardSummary = {
   checklist: { done: 1, total: 2 },
   commentCount: 1,
   hasDescription: true,
-  visibility: 'team',
-  cover: cardCover,
   archivedAt: null,
-};
-
-/** Card restrito para quem não tem acesso: são estes os únicos campos (ADR 0015). */
-export const lockedCard: LockedCard = {
-  id: ID.card,
-  listId: ID.list,
-  position: 'a0',
-  title: 'Revisar orçamento',
-  locked: true,
 };
 
 export const checklist: Checklist = {
@@ -142,7 +138,6 @@ export const comment: Comment = {
 export const cardDetail: CardDetail = {
   ...cardSummary,
   description: '# Contexto',
-  viewerIds: [],
   completedBy: null,
   createdBy: ID.user,
   createdAt: T0,

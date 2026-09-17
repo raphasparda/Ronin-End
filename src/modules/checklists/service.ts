@@ -10,7 +10,7 @@ import type { CardRow, ChecklistItemRow, ChecklistRow } from '../../db/schema';
 import { AppError } from '../../lib/app-error';
 import { toIso, toIsoOrNull } from '../../lib/dates';
 import { CHECKLIST_ITEM_SIBLINGS, computePosition } from '../../lib/ordering';
-import type { CardActor } from '../cards/access';
+import type { BoardActor } from '../boards/access';
 import { assertBoardWritable, cardTransaction, lockCard } from '../cards/service';
 
 import {
@@ -30,9 +30,9 @@ import {
 export const CHECKLIST_NOT_FOUND_MESSAGE = 'Checklist não encontrado.';
 export const CHECKLIST_ITEM_NOT_FOUND_MESSAGE = 'Item não encontrado.';
 
-/** Quem executa a ação e quando (o papel entra na checagem de acesso ao card, ADR 0015). */
+/** Quem executa a ação e quando (o papel entra na checagem de acesso ao quadro, ADR 0015). */
 export interface ChecklistActionContext {
-  actor: CardActor;
+  actor: BoardActor;
   now: Date;
 }
 
@@ -75,7 +75,7 @@ function itemNotFound(): AppError {
 async function lockWritableCard(
   tx: DbExecutor,
   cardId: string,
-  actor: CardActor,
+  actor: BoardActor,
 ): Promise<CardRow> {
   const { card, boards } = await lockCard(tx, cardId, { actor, lockLists: false });
   assertBoardWritable(boards.get(card.boardId));
@@ -86,7 +86,7 @@ async function lockWritableCard(
 async function lockChecklistForWrite(
   tx: DbExecutor,
   checklistId: string,
-  actor: CardActor,
+  actor: BoardActor,
 ): Promise<ChecklistRow> {
   const found = await findChecklistById(tx, checklistId);
   if (!found) throw checklistNotFound();
@@ -100,7 +100,7 @@ async function lockChecklistForWrite(
 async function lockItemForWrite(
   tx: DbExecutor,
   itemId: string,
-  actor: CardActor,
+  actor: BoardActor,
 ): Promise<{ checklist: ChecklistRow; item: ChecklistItemRow }> {
   const found = await findChecklistItemById(tx, itemId);
   if (!found) throw itemNotFound();
@@ -150,7 +150,7 @@ export async function renameChecklist(
 /** `DELETE /api/checklists/:checklistId`: itens em cascata. */
 export async function deleteChecklist(
   db: Database,
-  actor: CardActor,
+  actor: BoardActor,
   checklistId: string,
 ): Promise<void> {
   await cardTransaction(db, async (tx) => {
@@ -244,7 +244,7 @@ export async function moveChecklistItem(
 /** `DELETE /api/checklist-items/:itemId`. */
 export async function deleteChecklistItem(
   db: Database,
-  actor: CardActor,
+  actor: BoardActor,
   itemId: string,
 ): Promise<void> {
   await cardTransaction(db, async (tx) => {

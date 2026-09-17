@@ -5,8 +5,8 @@ import type { FastifyInstance } from 'fastify';
 import type { DbExecutor } from '../db/client';
 import { authThrottle, authTokens, sessions } from '../db/schema';
 import type { R2Client } from '../lib/r2';
-import { cleanupOrphanCovers } from '../modules/cards/cover';
-import { findExistingCoverKeys } from '../modules/cards/repository';
+import { cleanupOrphanCovers } from '../modules/boards/cover';
+import { findExistingCoverKeys } from '../modules/boards/repository';
 import { deleteReadNotificationsBefore } from '../modules/notifications/repository';
 
 const HOUR_MS = 60 * 60 * 1000;

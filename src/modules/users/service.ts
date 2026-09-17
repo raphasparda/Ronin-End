@@ -10,7 +10,7 @@ import {
   scrubAuthTokensOfUser,
 } from '../auth-tokens/repository';
 import { emailThrottleKey } from '../auth/throttle';
-import { deleteCardViewersOfUser } from '../cards/repository';
+import { deleteBoardViewersOfUser } from '../boards/repository';
 import { deleteNotificationsOfUser } from '../notifications/repository';
 import { deleteUserSessions } from '../sessions/service';
 
@@ -192,7 +192,7 @@ export async function anonymizeUser(
     await scrubAuthTokensOfUser(tx, target, ctx.now);
     await deleteNotificationsOfUser(tx, target.id);
     // RN38: conta anonimizada sai de todas as listas de acesso (o card continua restrito).
-    await deleteCardViewersOfUser(tx, target.id);
+    await deleteBoardViewersOfUser(tx, target.id);
     if (target.email !== null) await deleteEmailThrottle(tx, emailThrottleKey(target.email));
     return toAdminUser(updated);
   });

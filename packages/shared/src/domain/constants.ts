@@ -37,45 +37,45 @@ export const NOTIFICATIONS_MAX_LIMIT = 100;
 export const READ_NOTIFICATION_RETENTION_DAYS = 90;
 
 // ---------------------------------------------------------------------------
-// Capa do card (Fatia 11, ADR 0016)
+// Capa do quadro (Fatia 11, ADR 0016)
 // ---------------------------------------------------------------------------
 
 /** Tipos de imagem aceitos na capa (RN21). Sem SVG (script) e sem GIF (animação pesada). */
-export const CARD_COVER_CONTENT_TYPES = [
+export const BOARD_COVER_CONTENT_TYPES = [
   'image/jpeg',
   'image/png',
   'image/webp',
   'image/avif',
 ] as const;
-export type CardCoverContentType = (typeof CARD_COVER_CONTENT_TYPES)[number];
+export type BoardCoverContentType = (typeof BOARD_COVER_CONTENT_TYPES)[number];
 
 /** Tamanho máximo da capa: 5 MiB (RN22). */
-export const CARD_COVER_MAX_BYTES = 5 * 1024 * 1024;
+export const BOARD_COVER_MAX_BYTES = 5 * 1024 * 1024;
 
 /** Dimensão máxima aceita em `width`/`height` da capa (informadas pelo cliente). */
-export const CARD_COVER_MAX_DIMENSION = 20_000;
+export const BOARD_COVER_MAX_DIMENSION = 20_000;
 
 /** Caracteres aleatórios (base64url) no fim da chave do objeto: 24 bytes → 32 caracteres. */
-export const CARD_COVER_KEY_RANDOM_LENGTH = 32;
+export const BOARD_COVER_KEY_RANDOM_LENGTH = 32;
 
-/** Prefixo das chaves de capa no bucket (`covers/<cardId>/...`). */
-export const CARD_COVER_KEY_PREFIX = 'covers/';
+/** Prefixo das chaves de capa no bucket (`covers/<boardId>/...`). */
+export const BOARD_COVER_KEY_PREFIX = 'covers/';
 
-/** Sufixo aleatório de uma chave de capa (o que vem depois de `covers/<cardId>/`). */
-const CARD_COVER_KEY_RANDOM = /^[A-Za-z0-9_-]{32}$/;
+/** Sufixo aleatório de uma chave de capa (o que vem depois de `covers/<boardId>/`). */
+const BOARD_COVER_KEY_RANDOM = /^[A-Za-z0-9_-]{32}$/;
 
-/** Prefixo das capas de um card: `covers/<cardId>/`. */
-export function cardCoverKeyPrefix(cardId: string): string {
-  return `${CARD_COVER_KEY_PREFIX}${cardId}/`;
+/** Prefixo das capas de um quadro: `covers/<boardId>/`. */
+export function boardCoverKeyPrefix(boardId: string): string {
+  return `${BOARD_COVER_KEY_PREFIX}${boardId}/`;
 }
 
 /**
- * `true` se `objectKey` é uma chave de capa **daquele** card (I14):
- * `covers/<cardId>/<32 caracteres base64url>` (ADR 0016). Comparação sem montar regex com a
+ * `true` se `objectKey` é uma chave de capa **daquele** quadro (I14):
+ * `covers/<boardId>/<32 caracteres base64url>` (ADR 0016). Comparação sem montar regex com a
  * entrada, então serve para validar chave vinda do cliente.
  */
-export function isCardCoverKey(objectKey: string, cardId: string): boolean {
-  const prefix = cardCoverKeyPrefix(cardId);
+export function isBoardCoverKey(objectKey: string, boardId: string): boolean {
+  const prefix = boardCoverKeyPrefix(boardId);
   if (!objectKey.startsWith(prefix)) return false;
-  return CARD_COVER_KEY_RANDOM.test(objectKey.slice(prefix.length));
+  return BOARD_COVER_KEY_RANDOM.test(objectKey.slice(prefix.length));
 }

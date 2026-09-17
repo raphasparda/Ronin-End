@@ -1,17 +1,36 @@
 import { describe, expect, it } from 'vitest';
 
-import { ID, board, cardSummary, issuePaths, label, list } from '../test-fixtures';
+import {
+  ID,
+  T0,
+  board,
+  boardCover,
+  boardDetail,
+  cardSummary,
+  issuePaths,
+  label,
+  list,
+  lockedBoard,
+} from '../test-fixtures';
 import {
   archivedCardSchema,
   boardArchivedResponseSchema,
+  boardCoverUploadUrlRequestSchema,
   boardIdParamsSchema,
+  boardListItemSchema,
   boardPayloadSchema,
+  boardResponseSchema,
+  boardViewerParamsSchema,
+  boardViewersResponseSchema,
   boardsQuerySchema,
   boardsResponseSchema,
+  confirmBoardCoverRequestSchema,
   createBoardRequestSchema,
   createBoardResponseSchema,
   deleteBoardRequestSchema,
+  lockedBoardSchema,
   updateBoardRequestSchema,
+  updateBoardVisibilityRequestSchema,
 } from './boards';
 import {
   createListRequestSchema,
@@ -43,17 +62,20 @@ describe('quadros', () => {
   it('params e respostas simples', () => {
     expect(boardIdParamsSchema.safeParse({ boardId: 'abc' }).success).toBe(false);
     expect(boardsResponseSchema.parse({ boards: [board] })).toEqual({ boards: [board] });
-    expect(createBoardResponseSchema.parse({ board, lists: [list] })).toEqual({
-      board,
+    expect(createBoardResponseSchema.parse({ board: boardDetail, lists: [list] })).toEqual({
+      board: boardDetail,
       lists: [list],
     });
+    expect(boardResponseSchema.parse({ board: boardDetail })).toEqual({ board: boardDetail });
   });
 
   it('payload do quadro com listas, cards e etiquetas', () => {
-    const payload = { board, lists: [list], cards: [cardSummary], labels: [label] };
+    const payload = { board: boardDetail, lists: [list], cards: [cardSummary], labels: [label] };
     expect(boardPayloadSchema.parse(payload)).toEqual(payload);
     expect(boardPayloadSchema.parse({ ...payload, cards: [], labels: [] }).cards).toEqual([]);
-    expect(boardPayloadSchema.safeParse({ board, lists: [list] }).success).toBe(false);
+    expect(boardPayloadSchema.safeParse({ board: boardDetail, lists: [list] }).success).toBe(false);
+    // Sem `viewerIds` não é o quadro aberto (o payload é sempre de quem tem acesso).
+    expect(boardPayloadSchema.safeParse({ ...payload, board }).success).toBe(false);
   });
 
   it('excluir: confirmName com trim, obrigatório', () => {
@@ -75,6 +97,102 @@ describe('quadros', () => {
     expect(boardArchivedResponseSchema.safeParse({ lists: [], cards: [cardSummary] }).success).toBe(
       false,
     );
+  });
+});
+
+describe('quadros restritos e capa (Fatia 11)', () => {
+  const objectKey = `covers/${ID.board}/abcdefghijklmnopqrstuvwxyz012345`;
+
+  it('BoardListItem discrimina pelos dois valores de locked', () => {
+    expect(boardListItemSchema.parse(board)).toEqual(board);
+    expect(boardListItemSchema.parse(lockedBoard)).toEqual(lockedBoard);
+    const { locked: _locked, ...semDiscriminante } = board;
+    expect(boardListItemSchema.safeParse(semDiscriminante).success).toBe(false);
+    expect(boardListItemSchema.safeParse({ ...lockedBoard, locked: false }).success).toBe(false);
+  });
+
+  it('LockedBoard descarta qualquer campo além dos três declarados', () => {
+    const vazando = {
+      ...lockedBoard,
+      visibility: 'restricted',
+      cover: boardCover,
+      archivedAt: null,
+      createdAt: T0,
+      updatedAt: T0,
+      viewerIds: [ID.user],
+    };
+    const parsed = boardListItemSchema.parse(vazando);
+    expect(parsed).toEqual(lockedBoard);
+    expect(Object.keys(parsed).sort()).toEqual(['id', 'locked', 'name']);
+    expect(lockedBoardSchema.parse(vazando)).toEqual(lockedBoard);
+  });
+
+  it('quadro aberto traz visibilidade e capa (null sem capa)', () => {
+    expect(boardsResponseSchema.parse({ boards: [board] }).boards[0]).toEqual(board);
+    const semCapa = { ...board, cover: null, visibility: 'restricted' } as const;
+    expect(boardListItemSchema.parse(semCapa)).toEqual(semCapa);
+    expect(boardListItemSchema.safeParse({ ...board, visibility: 'privado' }).success).toBe(false);
+  });
+
+  it('visibilidade e viewers: corpo, parâmetros e resposta', () => {
+    expect(updateBoardVisibilityRequestSchema.parse({ visibility: 'team' })).toEqual({
+      visibility: 'team',
+    });
+    expect(updateBoardVisibilityRequestSchema.safeParse({ visibility: 'privado' }).success).toBe(
+      false,
+    );
+    expect(boardViewerParamsSchema.parse({ boardId: ID.board, userId: ID.user })).toEqual({
+      boardId: ID.board,
+      userId: ID.user,
+    });
+    expect(
+      issuePaths(boardViewerParamsSchema.safeParse({ boardId: ID.board, userId: 'x' })),
+    ).toEqual(['userId']);
+    expect(boardViewersResponseSchema.parse({ viewerIds: [ID.user] })).toEqual({
+      viewerIds: [ID.user],
+    });
+  });
+
+  it('URL de upload: tipo na lista e tamanho de 1 a 5 MiB', () => {
+    expect(
+      boardCoverUploadUrlRequestSchema.parse({ contentType: 'image/avif', sizeBytes: 5_242_880 }),
+    ).toEqual({ contentType: 'image/avif', sizeBytes: 5_242_880 });
+    expect(
+      issuePaths(
+        boardCoverUploadUrlRequestSchema.safeParse({ contentType: 'image/gif', sizeBytes: 10 }),
+      ),
+    ).toEqual(['contentType']);
+    expect(
+      issuePaths(
+        boardCoverUploadUrlRequestSchema.safeParse({
+          contentType: 'image/png',
+          sizeBytes: 5_242_881,
+        }),
+      ),
+    ).toEqual(['sizeBytes']);
+    expect(
+      issuePaths(
+        boardCoverUploadUrlRequestSchema.safeParse({ contentType: 'image/png', sizeBytes: 0 }),
+      ),
+    ).toEqual(['sizeBytes']);
+  });
+
+  it('confirmação: chave no formato de capa e dimensões opcionais', () => {
+    expect(confirmBoardCoverRequestSchema.parse({ objectKey })).toEqual({ objectKey });
+    expect(confirmBoardCoverRequestSchema.parse({ objectKey, width: 800, height: 600 })).toEqual({
+      objectKey,
+      width: 800,
+      height: 600,
+    });
+    expect(issuePaths(confirmBoardCoverRequestSchema.safeParse({ objectKey: 'covers/x' }))).toEqual(
+      ['objectKey'],
+    );
+    expect(
+      issuePaths(confirmBoardCoverRequestSchema.safeParse({ objectKey, width: 20_001 })),
+    ).toEqual(['width']);
+    expect(issuePaths(confirmBoardCoverRequestSchema.safeParse({ objectKey, height: 0 }))).toEqual([
+      'height',
+    ]);
   });
 });
 

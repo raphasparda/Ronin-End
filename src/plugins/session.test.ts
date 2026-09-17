@@ -79,7 +79,7 @@ describeDb('plugins/session (kanban_test)', () => {
     expect(ok.json()).toEqual({
       user: { id: user.id, name: 'Ana', email: 'ana@exemplo.com', role: 'admin' },
       workspace: { name: 'Ronin', timezone: 'America/Sao_Paulo' },
-      features: { cardCovers: false },
+      features: { boardCovers: false },
     });
     expect(ok.headers['set-cookie']).toBeUndefined();
 

@@ -1,12 +1,12 @@
-import { CARD_PRIORITIES, CARD_VISIBILITIES, PALETTE } from '@raphasparda/ronin-shared';
+import { BOARD_VISIBILITIES, CARD_PRIORITIES, PALETTE } from '@raphasparda/ronin-shared';
 import { expect, it } from 'vitest';
 
 import { describeDb, useTestDatabase } from '../../../test/db';
 
 import {
   activityType,
+  boardVisibility,
   cardPriority,
-  cardVisibility,
   notificationType,
   paletteColor,
 } from './index';
@@ -32,12 +32,12 @@ describeDb('schema: catálogo do MVP (fatias 2–9) e da fatia 11', () => {
     expect(rows.map((r) => r.name)).toEqual([
       'auth_throttle',
       'auth_tokens',
+      'board_covers',
+      'board_viewers',
       'boards',
       'card_activities',
       'card_assignees',
-      'card_covers',
       'card_labels',
-      'card_viewers',
       'cards',
       'checklist_items',
       'checklists',
@@ -58,16 +58,12 @@ describeDb('schema: catálogo do MVP (fatias 2–9) e da fatia 11', () => {
     expect(cardPriority.enumValues).toEqual([...CARD_PRIORITIES]);
     expect(await enumValues('activity_type')).toEqual(activityType.enumValues);
     expect(await enumValues('activity_type')).toContain('card_priority_changed');
-    // Fatia 11: valores novos entram no fim do enum (migration 0008).
-    expect(await enumValues('activity_type').then((values) => values.slice(-5))).toEqual([
-      'card_visibility_changed',
-      'card_viewer_added',
-      'card_viewer_removed',
-      'card_cover_changed',
-      'card_cover_removed',
-    ]);
-    expect(await enumValues('card_visibility')).toEqual([...CARD_VISIBILITIES]);
-    expect(cardVisibility.enumValues).toEqual([...CARD_VISIBILITIES]);
+    // Fatia 11 (migration 0009): visibilidade e capa saíram do card e os tipos correspondentes
+    // saíram do enum; o quadro não tem histórico próprio (api.md §18.9).
+    expect(await enumValues('activity_type')).not.toContain('card_visibility_changed');
+    expect(await enumValues('activity_type')).not.toContain('card_cover_changed');
+    expect(await enumValues('board_visibility')).toEqual([...BOARD_VISIBILITIES]);
+    expect(boardVisibility.enumValues).toEqual([...BOARD_VISIBILITIES]);
     expect(await enumValues('notification_type')).toEqual(notificationType.enumValues);
     expect(await enumValues('auth_token_kind')).toEqual(['invite', 'password_reset']);
     expect(await enumValues('card_status')).toEqual(['open', 'completed']);

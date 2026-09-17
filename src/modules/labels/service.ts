@@ -3,8 +3,8 @@ import type { CreateLabelRequest, Label, UpdateLabelRequest } from '@raphasparda
 import type { Database, DbExecutor } from '../../db/client';
 import type { BoardRow, CardRow, LabelRow } from '../../db/schema';
 import { AppError } from '../../lib/app-error';
+import { assertBoardAccess, type BoardActor } from '../boards/access';
 import { lockBoardsShared } from '../boards/repository';
-import type { CardActor } from '../cards/access';
 import { deleteCardLabel, findCardLabelIds, insertCardLabel } from '../cards/repository';
 import {
   assertBoardWritable,
@@ -40,25 +40,32 @@ function labelNotFound(): AppError {
 }
 
 /**
- * Quadro com lock `FOR SHARE` (arquivar/excluir o quadro espera a ação) e gravável.
- * Inexistente → `notFound()`; arquivado → `409 BOARD_ARCHIVED`.
+ * Quadro com lock `FOR SHARE` (arquivar/excluir o quadro espera a ação), acessível e gravável.
+ * Ordem: inexistente → `notFound()`; restrito sem acesso → `403 BOARD_RESTRICTED`; arquivado →
+ * `409 BOARD_ARCHIVED` (api.md §3).
  */
 async function lockBoardForContent(
   tx: DbExecutor,
   boardId: string,
+  actor: BoardActor,
   notFound: () => AppError,
 ): Promise<BoardRow> {
   const [board] = await lockBoardsShared(tx, [boardId]);
   if (!board) throw notFound();
+  await assertBoardAccess(tx, board, actor);
   if (board.archivedAt !== null) throw new AppError('BOARD_ARCHIVED', CARD_BOARD_ARCHIVED_MESSAGE);
   return board;
 }
 
-/** Etiqueta para mutação: 404 → quadro gravável (`409 BOARD_ARCHIVED`) → etiqueta bloqueada. */
-async function lockLabelForWrite(tx: DbExecutor, labelId: string): Promise<LabelRow> {
+/** Etiqueta para mutação: 404 → quadro acessível e gravável → etiqueta bloqueada. */
+async function lockLabelForWrite(
+  tx: DbExecutor,
+  labelId: string,
+  actor: BoardActor,
+): Promise<LabelRow> {
   const found = await findLabelById(tx, labelId);
   if (!found) throw labelNotFound();
-  await lockBoardForContent(tx, found.boardId, labelNotFound);
+  await lockBoardForContent(tx, found.boardId, actor, labelNotFound);
   const label = await lockLabelById(tx, labelId);
   if (!label) throw labelNotFound();
   return label;
@@ -67,6 +74,7 @@ async function lockLabelForWrite(tx: DbExecutor, labelId: string): Promise<Label
 /** `POST /api/boards/:boardId/labels { name, color }`. Ordem: 404 → `409 BOARD_ARCHIVED`. */
 export async function createLabel(
   db: Database,
+  actor: BoardActor,
   boardId: string,
   input: CreateLabelRequest,
   now: Date,
@@ -75,6 +83,7 @@ export async function createLabel(
     await lockBoardForContent(
       tx,
       boardId,
+      actor,
       () => new AppError('NOT_FOUND', LABEL_BOARD_NOT_FOUND_MESSAGE),
     );
     const row = await insertLabel(tx, {
@@ -94,12 +103,13 @@ export async function createLabel(
  */
 export async function updateLabel(
   db: Database,
+  actor: BoardActor,
   labelId: string,
   input: UpdateLabelRequest,
   now: Date,
 ): Promise<Label> {
   return db.transaction(async (tx) => {
-    const label = await lockLabelForWrite(tx, labelId);
+    const label = await lockLabelForWrite(tx, labelId, actor);
     const changes = {
       ...(input.name !== undefined && input.name !== label.name ? { name: input.name } : {}),
       ...(input.color !== undefined && input.color !== label.color ? { color: input.color } : {}),
@@ -110,9 +120,9 @@ export async function updateLabel(
 }
 
 /** `DELETE /api/labels/:labelId`: remove de todos os cards (cascata). 404 → `409 BOARD_ARCHIVED`. */
-export async function deleteLabel(db: Database, labelId: string): Promise<void> {
+export async function deleteLabel(db: Database, actor: BoardActor, labelId: string): Promise<void> {
   await db.transaction(async (tx) => {
-    const label = await lockLabelForWrite(tx, labelId);
+    const label = await lockLabelForWrite(tx, labelId, actor);
     await deleteLabelById(tx, label.id);
   });
 }
@@ -124,7 +134,7 @@ export async function deleteLabel(db: Database, labelId: string): Promise<void> 
  */
 async function lockCardAndLabel(
   tx: DbExecutor,
-  actor: CardActor,
+  actor: BoardActor,
   cardId: string,
   labelId: string,
 ): Promise<{ card: CardRow; label: LabelRow }> {
@@ -142,7 +152,7 @@ async function lockCardAndLabel(
  */
 export async function applyLabel(
   db: Database,
-  actor: CardActor,
+  actor: BoardActor,
   cardId: string,
   labelId: string,
 ): Promise<string[]> {
@@ -162,7 +172,7 @@ export async function applyLabel(
  */
 export async function removeLabel(
   db: Database,
-  actor: CardActor,
+  actor: BoardActor,
   cardId: string,
   labelId: string,
 ): Promise<string[]> {

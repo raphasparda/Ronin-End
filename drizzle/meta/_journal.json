@@ -64,6 +64,13 @@
       "when": 1789672069083,
       "tag": "0008_card_visibility_and_covers",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789679098228,
+      "tag": "0009_board_visibility_and_covers",
+      "breakpoints": true
     }
   ]
 }

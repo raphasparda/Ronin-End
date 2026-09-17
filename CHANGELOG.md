@@ -8,16 +8,33 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/). O
 
 Entrega das Fatias 0 a 9 do MVP, na branch `feat/mvp-fatias-2-9`. A Fatia 10 (produção em VPS, backup e revisão final) ainda está pendente: veja [`docs/ops/known-issues.md`](docs/ops/known-issues.md).
 
-### Fatia 11: cards restritos e capa do card (backend)
+### Fatia 11: quadros restritos e capa do quadro (backend)
 
-- **Cards restritos** ([ADR 0015](docs/architecture/adr/0015-visibilidade-do-card-e-payload-bloqueado.md)): card com `visibility: 'team' | 'restricted'` e lista de acesso (`card_viewers`). Quem não tem acesso continua vendo o card no quadro **só com título e cadeado** (`LockedCard`) e recebe `403 CARD_RESTRICTED` em qualquer rota daquele card. Admin sempre vê tudo. A regra mora num arquivo só (`modules/cards/access.ts`) e entra dentro do `lockCard()`, que toda mutação de card, checklist, comentário, etiqueta e responsável já usava.
-- Rotas novas: `PUT /api/cards/:cardId/visibility` e `PUT|DELETE /api/cards/:cardId/viewers/:userId`. Restringir inclui o ator e os responsáveis atuais; atribuir alguém a um card restrito dá acesso na mesma transação; tirar o acesso de um responsável é recusado (RN32); anonimizar uma conta a tira de todas as listas (RN38).
-- "Meus cards" e as notificações (lista e contador de não lidas) **omitem** cards sem acesso, sem apagar nada: o acesso de volta traz a notificação de volta.
-- **Capa do card** ([ADR 0016](docs/architecture/adr/0016-capas-no-cloudflare-r2-com-urls-assinadas.md)): imagem enviada do computador direto para o Cloudflare R2 (bucket privado) em três passos — `POST /api/cards/:cardId/cover/upload-url`, `PUT` no R2 e `PUT /api/cards/:cardId/cover`, que confere o objeto (`HEAD` + 16 primeiros bytes) antes de gravar. `DELETE /api/cards/:cardId/cover` remove imagem e linha. JPEG, PNG, WebP e AVIF, até 5 MB.
-- Leitura por URL assinada de curta duração (10 a 15 min, arredondada em janelas de 5 min para o polling do quadro não invalidar o cache do navegador), gerada localmente: o payload do quadro continua em 6 consultas.
-- Cliente do R2 próprio (`src/lib/r2.ts`, SigV4 com `node:crypto` e `fetch`), sem SDK e sem dependência nova. Recurso **opcional e tudo ou nada**: sem as variáveis `R2_*`, `features.cardCovers` é `false`, `cover` sai `null` e as rotas de capa respondem `503 COVER_STORAGE_UNAVAILABLE` — o resto do app não muda.
-- Migration `0008_card_visibility_and_covers`: enum `card_visibility`, `cards.visibility` (todo card existente continua `team`), tabelas `card_viewers` e `card_covers` e cinco tipos novos de atividade.
-- Respostas de setup, login, aceite de convite e `auth/me` passam a trazer `features`.
+> **Correção de alvo (2026-09-17).** A primeira versão desta fatia entregou capa e restrição no
+> **card**. O cliente esclareceu que as duas funções são do **quadro**, e o backend foi refeito: a
+> migration `0009` cria as estruturas do quadro e **derruba** as do card. O registro do desenho
+> anterior está em [`api.md` §18.7 e §18.8](docs/architecture/api.md); o que vale é a §18.9.
+
+- **Quadros restritos** ([ADR 0015](docs/architecture/adr/0015-visibilidade-do-quadro-e-listagem-bloqueada.md)): quadro com `visibility: 'team' | 'restricted'` e lista de acesso (`board_viewers`). Quem não tem acesso continua vendo o quadro na home **só com o nome e um cadeado** (`LockedBoard`) e recebe `403 BOARD_RESTRICTED` em qualquer rota do quadro, das listas, dos cards e do conteúdo deles (comentários, checklists, etiquetas, responsáveis, atividade, capa). Admin sempre vê tudo. A regra mora num arquivo só (`modules/boards/access.ts`) e entra dentro dos locks (`lockBoard()` e `lockCard()`) que toda mutação já usava.
+- Rotas novas: `PUT /api/boards/:boardId/visibility` e `PUT|DELETE /api/boards/:boardId/viewers/:userId`. Restringir inclui o ator e o criador do quadro; anonimizar uma conta a tira de todas as listas (RN38).
+- "Meus cards" e as notificações (lista e contador de não lidas) **omitem** cards de quadros sem acesso, sem apagar nada: o acesso de volta traz a notificação de volta.
+- **Capa do quadro** ([ADR 0016](docs/architecture/adr/0016-capas-no-cloudflare-r2-com-urls-assinadas.md)): imagem enviada do computador direto para o Cloudflare R2 (bucket privado) em três passos — `POST /api/boards/:boardId/cover/upload-url`, `PUT` no R2 e `PUT /api/boards/:boardId/cover`, que confere o objeto (`HEAD` + 16 primeiros bytes) antes de gravar. `DELETE /api/boards/:boardId/cover` remove imagem e linha. JPEG, PNG, WebP e AVIF, até 5 MB.
+- Leitura por URL assinada de curta duração (10 a 15 min, arredondada em janelas de 5 min para o polling não invalidar o cache do navegador), gerada localmente: o payload do quadro continua em 6 consultas.
+- Cliente do R2 próprio (`src/lib/r2.ts`, SigV4 com `node:crypto` e `fetch`), sem SDK e sem dependência nova. Recurso **opcional e tudo ou nada**: sem as variáveis `R2_*`, `features.boardCovers` é `false`, `cover` sai `null` e as rotas de capa respondem `503 COVER_STORAGE_UNAVAILABLE` — o resto do app não muda.
+- Migration `0008_card_visibility_and_covers` (versão anterior): enum `card_visibility`, `cards.visibility`, `card_viewers`, `card_covers` e cinco tipos novos de atividade.
+- Migration `0009_board_visibility_and_covers`: enum `board_visibility`, `boards.visibility` (todo quadro existente continua `team`), tabelas `board_viewers` e `board_covers`; **derruba** `card_viewers`, `card_covers`, `cards.visibility` e recria `activity_type` sem `card_visibility_changed`, `card_viewer_added`, `card_viewer_removed`, `card_cover_changed` e `card_cover_removed`.
+- Respostas de setup, login, aceite de convite e `auth/me` passam a trazer `features` (`{ boardCovers }`).
+
+#### Perda de dados assumida na migration `0009`
+
+A migration é **destrutiva** para o que a `0008` tinha criado. Ao aplicar:
+
+- cards com `visibility = 'restricted'` voltam a ser visíveis para a equipe (a coluna deixa de existir);
+- as listas de acesso de card (`card_viewers`) são apagadas;
+- as capas de card (`card_covers`) são apagadas **do banco**; os arquivos continuam no bucket e são recolhidos automaticamente pela varredura diária de órfãos (apaga todo objeto sob `covers/` sem linha em `board_covers` e com mais de 24 h). Quem quiser conferir antes do deploy pode rodar `SELECT count(*) FROM card_covers;` e `SELECT count(*) FROM card_viewers;` na base de produção;
+- as atividades dos cinco tipos removidos são apagadas de `card_activities` (é o que permite recriar o enum). Nenhuma outra atividade é tocada.
+
+Como a Fatia 11 foi para produção há poucos dias e as duas funções mal chegaram a ser usadas, a perda esperada é zero ou perto disso — mas ela é real e não tem volta: vale conferir as duas contagens acima antes de aplicar.
 
 ### Deploy no Render e Neon
 

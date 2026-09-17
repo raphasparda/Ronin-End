@@ -70,7 +70,7 @@ describeDb('módulo auth (kanban_test)', () => {
       expect(authSessionResponseSchema.strict().parse(res.json())).toEqual({
         user: { id: userId, name: 'Ana', email: 'ana@exemplo.com', role: 'admin' },
         workspace: { name: 'Ronin', timezone: 'America/Sao_Paulo' },
-        features: { cardCovers: false },
+        features: { boardCovers: false },
       });
       const cookie = sessionCookieOf(res);
       expect(cookie?.value).toMatch(/^[A-Za-z0-9_-]{43}$/);

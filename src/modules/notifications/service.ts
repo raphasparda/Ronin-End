@@ -7,7 +7,7 @@ import type {
 import type { Database } from '../../db/client';
 import { AppError } from '../../lib/app-error';
 import { toIso, toIsoOrNull } from '../../lib/dates';
-import type { CardActor } from '../cards/access';
+import type { BoardActor } from '../boards/access';
 
 import {
   countUnreadNotifications,
@@ -40,7 +40,7 @@ function toNotification(row: NotificationListRow): Notification {
  */
 export async function listNotifications(
   db: Database,
-  actor: CardActor,
+  actor: BoardActor,
   query: NotificationsQuery,
 ): Promise<NotificationsResponse> {
   return db.transaction(
@@ -79,7 +79,7 @@ export async function listNotifications(
 }
 
 /** `GET /api/notifications/unread-count`. */
-export function getUnreadCount(db: Database, actor: CardActor): Promise<number> {
+export function getUnreadCount(db: Database, actor: BoardActor): Promise<number> {
   return countUnreadNotifications(db, actor);
 }
 

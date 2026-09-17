@@ -5,7 +5,7 @@ import type { Env } from './env';
 /**
  * Cliente do bucket de capas (ADR 0016) ou `null` quando a instância não tem R2 configurado.
  * As quatro variáveis são tudo ou nada (`config/env.ts`), então basta olhar uma delas para saber
- * se o recurso está ligado. Sem R2: `features.cardCovers: false`, `cover` sempre `null` e as rotas
+ * se o recurso está ligado. Sem R2: `features.boardCovers: false`, `cover` sempre `null` e as rotas
  * de capa respondem `503 COVER_STORAGE_UNAVAILABLE` — o resto do app não muda.
  */
 export function createCoverStorage(env: Env): R2Client | null {

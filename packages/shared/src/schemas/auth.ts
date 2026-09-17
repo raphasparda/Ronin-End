@@ -34,10 +34,10 @@ export const workspaceSchema = z.object({
 
 /**
  * Recursos ligados nesta instância (dependem de configuração, não de papel; Fatia 11).
- * `cardCovers` é `false` quando a instância não tem R2 configurado (ADR 0016).
+ * `boardCovers` é `false` quando a instância não tem R2 configurado (ADR 0016).
  */
 export const featuresSchema = z.object({
-  cardCovers: z.boolean(),
+  boardCovers: z.boolean(),
 });
 
 /** `{ user, workspace, features }`: resposta de setup, login, aceite de convite e `auth/me`. */

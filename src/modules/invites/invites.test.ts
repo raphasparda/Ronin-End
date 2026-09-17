@@ -310,7 +310,7 @@ describeDb('convites (kanban_test)', () => {
       expect(body).toEqual({
         user: { id: body.user.id, name: 'Nova Pessoa', email: 'nova@exemplo.com', role: 'admin' },
         workspace: { name: 'Ronin', timezone: 'America/Sao_Paulo' },
-        features: { cardCovers: false },
+        features: { boardCovers: false },
       });
       const [row] = await db().select().from(authTokens).where(eq(authTokens.id, created.id));
       expect(row).toMatchObject({ usedByUserId: body.user.id, usedAt: clock.now() });

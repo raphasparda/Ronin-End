@@ -4,7 +4,6 @@ import {
   desc,
   eq,
   exists,
-  inArray,
   isNotNull,
   isNull,
   notExists,
@@ -16,10 +15,8 @@ import type { DbExecutor } from '../../db/client';
 import {
   boards,
   cardAssignees,
-  cardCovers,
   cardLabels,
   cards,
-  cardViewers,
   checklistItems,
   checklists,
   comments,
@@ -29,12 +26,11 @@ import {
   type ChecklistItemRow,
   type ChecklistRow,
   type CommentRow,
-  type CardCoverRow,
   type ListRow,
   type NewCardRow,
 } from '../../db/schema';
 
-import { cardAccessCondition, type CardActor } from './access';
+import { boardAccessCondition, type BoardActor } from '../boards/access';
 
 export type CardSummaryRow = Pick<
   CardRow,
@@ -48,15 +44,8 @@ export type CardSummaryRow = Pick<
   | 'dueAt'
   | 'dueHasTime'
   | 'priority'
-  | 'visibility'
   | 'archivedAt'
 > & {
-  /** `false` = card restrito sem acesso: a resposta vira `LockedCard` (ADR 0015). */
-  accessible: boolean;
-  /** Capa (ADR 0016): `null` sem capa — e sempre `null` em card bloqueado (o join é condicionado). */
-  coverObjectKey: string | null;
-  coverWidth: number | null;
-  coverHeight: number | null;
   hasDescription: boolean;
   checklistDone: number;
   checklistTotal: number;
@@ -70,9 +59,28 @@ export type CardSummaryRow = Pick<
 /**
  * Cards de um quadro (`active` ou `archived`), um card só (arquivado ou não) ou "Meus cards"
  * (`assigneeId`: abertos, não arquivados, em lista e quadro não arquivados, atribuídos ao usuário).
+ *
+ * Os dois primeiros escopos já entram por um quadro cujo acesso foi checado (`lockBoard`/
+ * `assertBoardAccess`); só "Meus cards" atravessa quadros e precisa filtrar por acesso (ADR 0015).
  */
 export type CardSummaryScope =
-  { boardId: string; state: 'active' | 'archived' } | { cardId: string } | { assigneeId: string };
+  | { boardId: string; state: 'active' | 'archived' }
+  | { cardId: string }
+  | { assigneeId: string; actor: BoardActor };
+
+/**
+ * Acesso ao **quadro** do card, em SQL, sem exigir `boards` na consulta: subconsulta correlacionada
+ * por `cards.board_id`, servida pela PK de `boards` e pela de `board_viewers` (sem N+1).
+ */
+function accessibleBoardCondition(db: DbExecutor, actor: BoardActor): SQL {
+  if (actor.role === 'admin') return sql`true`;
+  return exists(
+    db
+      .select({ one: sql`1` })
+      .from(boards)
+      .where(and(eq(boards.id, cards.boardId), boardAccessCondition(db, actor))),
+  );
+}
 
 /** O card está numa lista ativa (e, com `withBoard`, num quadro ativo). */
 function inActiveContainers(db: DbExecutor, withBoard: boolean): SQL {
@@ -109,6 +117,7 @@ function scopeFilterOf(db: DbExecutor, scope: CardSummaryScope): SQL {
         ) as SQL)
       : (and(eq(cards.boardId, scope.boardId), isNotNull(cards.archivedAt)) as SQL);
   }
+  // "Meus cards" filtra (não bloqueia): card de quadro sem acesso não é item de trabalho.
   return and(
     exists(
       db
@@ -119,15 +128,8 @@ function scopeFilterOf(db: DbExecutor, scope: CardSummaryScope): SQL {
     eq(cards.status, 'open'),
     isNull(cards.archivedAt),
     inActiveContainers(db, true),
+    accessibleBoardCondition(db, scope.actor),
   ) as SQL;
-}
-
-/**
- * Escopo + acesso: usado nos agregados e nos pares de etiquetas/responsáveis, para que **nenhum**
- * dado de card bloqueado saia do banco (ADR 0015, api.md §18.7 item 48).
- */
-function scopeWithAccessOf(db: DbExecutor, scope: CardSummaryScope, actor: CardActor): SQL {
-  return and(scopeFilterOf(db, scope), cardAccessCondition(db, actor)) as SQL;
 }
 
 /**
@@ -141,16 +143,8 @@ function scopeWithAccessOf(db: DbExecutor, scope: CardSummaryScope, actor: CardA
 export async function findCardSummaryRows(
   db: DbExecutor,
   scope: CardSummaryScope,
-  actor: CardActor,
 ): Promise<CardSummaryRow[]> {
-  const access = cardAccessCondition(db, actor);
-  // "Meus cards" filtra (não bloqueia): card sem acesso não é item de trabalho (§18.7 item 49).
-  const scopeFilter =
-    'assigneeId' in scope
-      ? (and(scopeFilterOf(db, scope), access) as SQL)
-      : scopeFilterOf(db, scope);
-  // Agregados e listas de etiquetas/responsáveis nunca leem card bloqueado.
-  const aggregateFilter = scopeWithAccessOf(db, scope, actor);
+  const scopeFilter = scopeFilterOf(db, scope);
 
   const checklistAgg = db
     .select({
@@ -163,7 +157,7 @@ export async function findCardSummaryRows(
     .from(checklists)
     .innerJoin(cards, eq(cards.id, checklists.cardId))
     .innerJoin(checklistItems, eq(checklistItems.checklistId, checklists.id))
-    .where(aggregateFilter)
+    .where(scopeFilter)
     .groupBy(checklists.cardId)
     .as('checklist_agg');
 
@@ -174,7 +168,7 @@ export async function findCardSummaryRows(
     })
     .from(comments)
     .innerJoin(cards, eq(cards.id, comments.cardId))
-    .where(aggregateFilter)
+    .where(scopeFilter)
     .groupBy(comments.cardId)
     .as('comment_agg');
 
@@ -190,12 +184,7 @@ export async function findCardSummaryRows(
       dueAt: cards.dueAt,
       dueHasTime: cards.dueHasTime,
       priority: cards.priority,
-      visibility: cards.visibility,
       archivedAt: cards.archivedAt,
-      accessible: sql<boolean>`(${access})`.mapWith(Boolean),
-      coverObjectKey: cardCovers.objectKey,
-      coverWidth: cardCovers.width,
-      coverHeight: cardCovers.height,
       hasDescription: sql<boolean>`(${cards.description} <> '')`,
       checklistDone: sql<number>`coalesce(${checklistAgg.done}, 0)`.mapWith(Number),
       checklistTotal: sql<number>`coalesce(${checklistAgg.total}, 0)`.mapWith(Number),
@@ -209,9 +198,7 @@ export async function findCardSummaryRows(
     .innerJoin(lists, eq(lists.id, cards.listId))
     .innerJoin(boards, eq(boards.id, cards.boardId))
     .leftJoin(checklistAgg, eq(checklistAgg.cardId, cards.id))
-    .leftJoin(commentAgg, eq(commentAgg.cardId, cards.id))
-    // O acesso entra no próprio join: card bloqueado não traz nem a chave do objeto (RN26).
-    .leftJoin(cardCovers, and(eq(cardCovers.cardId, cards.id), access));
+    .leftJoin(commentAgg, eq(commentAgg.cardId, cards.id));
 
   if ('cardId' in scope) return query.where(scopeFilter).limit(1);
   if ('assigneeId' in scope) {
@@ -236,14 +223,13 @@ export async function findCardSummaryRows(
 export async function findCardLabelPairs(
   db: DbExecutor,
   scope: CardSummaryScope,
-  actor: CardActor,
 ): Promise<{ cardId: string; labelId: string }[]> {
   return db
     .select({ cardId: cardLabels.cardId, labelId: cardLabels.labelId })
     .from(cardLabels)
     .innerJoin(cards, eq(cards.id, cardLabels.cardId))
     .innerJoin(labels, eq(labels.id, cardLabels.labelId))
-    .where(scopeWithAccessOf(db, scope, actor))
+    .where(scopeFilterOf(db, scope))
     .orderBy(asc(labels.name), asc(labels.id));
 }
 
@@ -251,13 +237,12 @@ export async function findCardLabelPairs(
 export async function findCardAssigneePairs(
   db: DbExecutor,
   scope: CardSummaryScope,
-  actor: CardActor,
 ): Promise<{ cardId: string; userId: string }[]> {
   return db
     .select({ cardId: cardAssignees.cardId, userId: cardAssignees.userId })
     .from(cardAssignees)
     .innerJoin(cards, eq(cards.id, cardAssignees.cardId))
-    .where(scopeWithAccessOf(db, scope, actor))
+    .where(scopeFilterOf(db, scope))
     .orderBy(asc(cardAssignees.createdAt), asc(cardAssignees.userId));
 }
 
@@ -293,7 +278,6 @@ export async function updateCardById(
       | 'dueAt'
       | 'dueHasTime'
       | 'priority'
-      | 'visibility'
       | 'listId'
       | 'boardId'
       | 'position'
@@ -409,144 +393,6 @@ export async function deleteCardAssignee(
     .where(and(eq(cardAssignees.cardId, cardId), eq(cardAssignees.userId, userId)))
     .returning({ userId: cardAssignees.userId });
   return rows.length > 0;
-}
-
-// ---------------------------------------------------------------------------
-// Capa do card (Fatia 11, ADR 0016)
-// ---------------------------------------------------------------------------
-
-/** Capa do card (0..1). */
-export async function findCardCover(
-  db: DbExecutor,
-  cardId: string,
-): Promise<CardCoverRow | undefined> {
-  const [row] = await db.select().from(cardCovers).where(eq(cardCovers.cardId, cardId)).limit(1);
-  return row;
-}
-
-/** Grava a capa; trocar é `INSERT ... ON CONFLICT (card_id) DO UPDATE`. */
-export async function upsertCardCover(
-  db: DbExecutor,
-  values: {
-    cardId: string;
-    objectKey: string;
-    contentType: string;
-    sizeBytes: number;
-    width: number | null;
-    height: number | null;
-    uploadedBy: string;
-    now: Date;
-  },
-): Promise<void> {
-  await db
-    .insert(cardCovers)
-    .values({
-      cardId: values.cardId,
-      objectKey: values.objectKey,
-      contentType: values.contentType,
-      sizeBytes: values.sizeBytes,
-      width: values.width,
-      height: values.height,
-      uploadedBy: values.uploadedBy,
-      createdAt: values.now,
-      updatedAt: values.now,
-    })
-    .onConflictDoUpdate({
-      target: cardCovers.cardId,
-      set: {
-        objectKey: values.objectKey,
-        contentType: values.contentType,
-        sizeBytes: values.sizeBytes,
-        width: values.width,
-        height: values.height,
-        uploadedBy: values.uploadedBy,
-        updatedAt: values.now,
-      },
-    });
-}
-
-/** Apaga a linha da capa; `true` se existia. */
-export async function deleteCardCover(db: DbExecutor, cardId: string): Promise<boolean> {
-  const rows = await db
-    .delete(cardCovers)
-    .where(eq(cardCovers.cardId, cardId))
-    .returning({ cardId: cardCovers.cardId });
-  return rows.length > 0;
-}
-
-/** Chaves das capas dos cards de um quadro (exclusão do quadro apaga os objetos depois do commit). */
-export async function findBoardCoverKeys(db: DbExecutor, boardId: string): Promise<string[]> {
-  const rows = await db
-    .select({ objectKey: cardCovers.objectKey })
-    .from(cardCovers)
-    .innerJoin(cards, eq(cards.id, cardCovers.cardId))
-    .where(eq(cards.boardId, boardId));
-  return rows.map((row) => row.objectKey);
-}
-
-/** Quais das chaves informadas ainda têm linha em `card_covers` (varredura de órfãos). */
-export async function findExistingCoverKeys(db: DbExecutor, keys: string[]): Promise<Set<string>> {
-  if (keys.length === 0) return new Set();
-  const rows = await db
-    .select({ objectKey: cardCovers.objectKey })
-    .from(cardCovers)
-    .where(inArray(cardCovers.objectKey, keys));
-  return new Set(rows.map((row) => row.objectKey));
-}
-
-// ---------------------------------------------------------------------------
-// Lista de acesso do card restrito (Fatia 11, ADR 0015)
-// ---------------------------------------------------------------------------
-
-/** Lista de acesso do card, por ordem de inclusão (mesma ordem devolvida em `viewerIds`). */
-export async function findCardViewerIds(db: DbExecutor, cardId: string): Promise<string[]> {
-  const rows = await db
-    .select({ userId: cardViewers.userId })
-    .from(cardViewers)
-    .where(eq(cardViewers.cardId, cardId))
-    .orderBy(asc(cardViewers.createdAt), asc(cardViewers.userId));
-  return rows.map((row) => row.userId);
-}
-
-/** Inclui na lista de acesso; `true` se a inclusão é nova (`ON CONFLICT DO NOTHING` na PK). */
-export async function insertCardViewer(
-  db: DbExecutor,
-  values: { cardId: string; userId: string; addedBy: string; now: Date },
-): Promise<boolean> {
-  const rows = await db
-    .insert(cardViewers)
-    .values({
-      cardId: values.cardId,
-      userId: values.userId,
-      addedBy: values.addedBy,
-      createdAt: values.now,
-    })
-    .onConflictDoNothing()
-    .returning({ userId: cardViewers.userId });
-  return rows.length > 0;
-}
-
-/** Remove da lista de acesso; `true` se existia. */
-export async function deleteCardViewer(
-  db: DbExecutor,
-  cardId: string,
-  userId: string,
-): Promise<boolean> {
-  const rows = await db
-    .delete(cardViewers)
-    .where(and(eq(cardViewers.cardId, cardId), eq(cardViewers.userId, userId)))
-    .returning({ userId: cardViewers.userId });
-  return rows.length > 0;
-}
-
-/** Anonimização (RN38): tira a pessoa de todas as listas de acesso. */
-export async function deleteCardViewersOfUser(db: DbExecutor, userId: string): Promise<void> {
-  await db.delete(cardViewers).where(eq(cardViewers.userId, userId));
-}
-
-/** Apaga a lista de acesso inteira (voltar o card para `team`). */
-export async function deleteCardViewers(db: DbExecutor, cardId: string): Promise<void> {
-  await db.delete(cardViewers).where(eq(cardViewers.cardId, cardId));
 }
 
 /** Etiquetas aplicadas a um card, por nome da etiqueta (mesma ordem do payload do quadro). */

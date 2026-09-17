@@ -100,7 +100,7 @@ export const envSchema = z
     LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
     /**
      * Capa do card no Cloudflare R2 (Fatia 11, ADR 0016). As quatro primeiras são **tudo ou
-     * nada**: sem elas o recurso fica desligado (`features.cardCovers: false`); com parte delas a
+     * nada**: sem elas o recurso fica desligado (`features.boardCovers: false`); com parte delas a
      * API não sobe (fail-closed, overview.md §6.9).
      */
     R2_ACCOUNT_ID: z.string().trim().min(1).optional(),

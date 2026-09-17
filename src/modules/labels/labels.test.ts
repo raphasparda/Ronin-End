@@ -11,7 +11,6 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { expectError, MISSING_ID, seedTeam, type Actor } from '../../../test/actors';
-import { unlockedCard } from '../../../test/cards';
 import { csrfHeaders } from '../../../test/app';
 import { createDbTestApp, createTestClock } from '../../../test/auth';
 import { describeDb, useTestDatabase } from '../../../test/db';
@@ -231,7 +230,7 @@ describeDb('rotas de etiquetas (kanban_test)', () => {
       expect(res.body).toBe('');
       const after = await payload(board.id);
       expect(after.labels.map((l) => l.id)).toEqual([kept.id]);
-      expect(after.cards.map((card) => [card.id, unlockedCard(card).labelIds])).toEqual([
+      expect(after.cards.map((card) => [card.id, card.labelIds])).toEqual([
         [a.id, [kept.id]],
         [b.id, []],
       ]);
@@ -265,7 +264,7 @@ describeDb('rotas de etiquetas (kanban_test)', () => {
       expect(await db().$count(cardLabels)).toBe(2);
       expect(await db().$count(cardActivities)).toBe(1); // só card_created
 
-      expect(unlockedCard((await payload(board.id)).cards[0]).labelIds).toEqual([alfa.id, zeta.id]);
+      expect((await payload(board.id)).cards[0]?.labelIds).toEqual([alfa.id, zeta.id]);
       expect(labelIds(await cardLabel(created.id, zeta.id, 'DELETE'))).toEqual([alfa.id]);
       expect(labelIds(await cardLabel(created.id, zeta.id, 'DELETE'))).toEqual([alfa.id]);
     });

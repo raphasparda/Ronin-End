@@ -28,7 +28,13 @@ export const labelRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
       },
     },
     async (request, reply) => {
-      const label = await createLabel(app.db, request.params.boardId, request.body, app.clock());
+      const label = await createLabel(
+        app.db,
+        requireUser(request),
+        request.params.boardId,
+        request.body,
+        app.clock(),
+      );
       return reply.status(201).send({ label });
     },
   );
@@ -45,7 +51,13 @@ export const labelRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
       },
     },
     async (request) => ({
-      label: await updateLabel(app.db, request.params.labelId, request.body, app.clock()),
+      label: await updateLabel(
+        app.db,
+        requireUser(request),
+        request.params.labelId,
+        request.body,
+        app.clock(),
+      ),
     }),
   );
 
@@ -60,7 +72,7 @@ export const labelRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
       },
     },
     async (request, reply) => {
-      await deleteLabel(app.db, request.params.labelId);
+      await deleteLabel(app.db, requireUser(request), request.params.labelId);
       return reply.status(204).send(null);
     },
   );

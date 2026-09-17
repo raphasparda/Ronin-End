@@ -13,7 +13,7 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { expectError, MISSING_ID, seedTeam, type Actor } from '../../../test/actors';
-import { cardActor } from '../../../test/cards';
+import { boardActor } from '../../../test/actor-context';
 import { csrfHeaders } from '../../../test/app';
 import { createDbTestApp, createTestClock } from '../../../test/auth';
 import { describeDb, useTestDatabase } from '../../../test/db';
@@ -150,7 +150,6 @@ describeDb('rotas de cards (kanban_test)', () => {
       expect(res.statusCode).toBe(201);
       const second = cardSummaryResponseSchema.strict().parse(res.json()).card;
       expect(second).toEqual({
-        locked: false,
         id: second.id,
         boardId: board.id,
         listId: todo.id,
@@ -161,13 +160,11 @@ describeDb('rotas de cards (kanban_test)', () => {
         dueAt: null,
         dueHasTime: false,
         priority: null,
-        visibility: 'team',
         labelIds: [],
         assigneeIds: [],
         checklist: { done: 0, total: 0 },
         commentCount: 0,
         hasDescription: false,
-        cover: null,
         archivedAt: null,
       });
       expect(second.position > first.position).toBe(true);
@@ -961,20 +958,18 @@ describeDb('rotas de cards (kanban_test)', () => {
           .values({ cardId: c.id, userId: member.user.id, assignedBy: member.user.id });
       }
       const activeScope = { boardId: board.id, state: 'active' } as const;
-      expect(
-        (await findCardLabelPairs(db(), activeScope, cardActor(member))).map((p) => p.cardId),
-      ).toEqual([active.id]);
-      expect(
-        (await findCardAssigneePairs(db(), activeScope, cardActor(member))).map((p) => p.cardId),
-      ).toEqual([active.id]);
+      expect((await findCardLabelPairs(db(), activeScope)).map((p) => p.cardId)).toEqual([
+        active.id,
+      ]);
+      expect((await findCardAssigneePairs(db(), activeScope)).map((p) => p.cardId)).toEqual([
+        active.id,
+      ]);
       const archivedScope = { boardId: board.id, state: 'archived' } as const;
-      expect(
-        (await findCardLabelPairs(db(), archivedScope, cardActor(member))).map((p) => p.cardId),
-      ).toEqual([archivedCard.id]);
-      const mine = { assigneeId: member.user.id };
-      expect(
-        (await findCardAssigneePairs(db(), mine, cardActor(member))).map((p) => p.cardId),
-      ).toEqual([active.id]);
+      expect((await findCardLabelPairs(db(), archivedScope)).map((p) => p.cardId)).toEqual([
+        archivedCard.id,
+      ]);
+      const mine = { assigneeId: member.user.id, actor: boardActor(member) };
+      expect((await findCardAssigneePairs(db(), mine)).map((p) => p.cardId)).toEqual([active.id]);
     });
   });
 });

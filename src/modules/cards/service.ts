@@ -4,16 +4,13 @@ import {
   completionChangeOnRestore,
   reopenTargetListId,
   type Activity,
-  type BoardArchivedCard,
-  type BoardCard,
+  type ArchivedCard,
   type CardDetail,
   type CardMutationResult,
   type CardSummary,
-  type CardVisibility,
   type Checklist,
   type CompletionChange,
   type Comment,
-  type LockedCard,
   type MoveCardRequest,
   type MyCard,
   type UpdateCardRequest,
@@ -22,12 +19,12 @@ import {
 import type { Database, DbExecutor } from '../../db/client';
 import type { BoardRow, CardRow, ListRow } from '../../db/schema';
 import { AppError } from '../../lib/app-error';
-import type { R2Client } from '../../lib/r2';
 import { toIso, toIsoOrNull } from '../../lib/dates';
 import { CARD_SIBLINGS, computePosition } from '../../lib/ordering';
 import { dueInputToUtc } from '../../lib/time';
 import { FORBIDDEN_MESSAGE } from '../../plugins/session';
 import { listCardActivities, recordActivity } from '../activity/service';
+import { assertBoardAccess, type BoardActor } from '../boards/access';
 import { findBoardById, lockBoardsShared } from '../boards/repository';
 import { applyCompletionChange } from '../completion/service';
 import { findActiveLists, findListById, lockListById, lockListsByIds } from '../lists/repository';
@@ -36,8 +33,6 @@ import { findUserById, lockUserShared } from '../users/repository';
 import { USER_NOT_FOUND_MESSAGE } from '../users/service';
 import { getWorkspace } from '../workspace/service';
 
-import { assertCardAccess, cardRestricted, type CardActor } from './access';
-import { coverReadContext, deleteCoverObject, toCardCover, type CoverReadContext } from './cover';
 import {
   deleteCardAssignee,
   deleteCardById,
@@ -46,15 +41,10 @@ import {
   findCardAssigneePairs,
   findCardById,
   findCardChecklists,
-  findCardCover,
   findCardComments,
   findCardLabelPairs,
   findCardSummaryRows,
-  findCardViewerIds,
-  deleteCardViewer,
-  deleteCardViewers,
   insertCardAssignee,
-  insertCardViewer,
   insertCardRow,
   lockCardById,
   updateCardById,
@@ -73,22 +63,11 @@ export const CARD_ARCHIVED_COMPLETION_MESSAGE =
   'Este card está arquivado. Restaure-o antes de concluir ou reabrir.';
 export const USER_NOT_ACTIVE_ASSIGN_MESSAGE =
   'Esta pessoa está desativada e não pode ser atribuída ao card.';
-export const USER_NOT_ACTIVE_VIEWER_MESSAGE =
-  'Esta pessoa está desativada e não pode receber acesso ao card.';
-export const CARD_NOT_RESTRICTED_MESSAGE =
-  'Este card é visível para a equipe. Restrinja o card antes de mexer na lista de acesso.';
 
-/** RN32: responsável de card restrito não perde o acesso (tire a atribuição antes). */
-export function viewerIsAssigneeMessage(name: string): string {
-  return `${name} é responsável por este card. Remova a pessoa dos responsáveis antes de tirar o acesso.`;
-}
-
-/** Contexto de quem executa a ação (o papel entra na checagem de acesso, ADR 0015). */
+/** Contexto de quem executa a ação (o papel entra na checagem de acesso ao quadro, ADR 0015). */
 export interface CardActionContext {
-  actor: CardActor;
+  actor: BoardActor;
   now: Date;
-  /** Bucket das capas (ou `null`): as respostas trazem a URL assinada da capa (ADR 0016). */
-  coverStorage: R2Client | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -110,10 +89,8 @@ function toCardSummary(
   row: CardSummaryRow,
   labelIds: Map<string, string[]>,
   assigneeIds: Map<string, string[]>,
-  covers: CoverReadContext,
 ): CardSummary {
   return {
-    locked: false,
     id: row.id,
     boardId: row.boardId,
     listId: row.listId,
@@ -124,42 +101,24 @@ function toCardSummary(
     dueAt: toIsoOrNull(row.dueAt),
     dueHasTime: row.dueHasTime,
     priority: row.priority,
-    visibility: row.visibility,
     labelIds: labelIds.get(row.id) ?? [],
     assigneeIds: assigneeIds.get(row.id) ?? [],
     checklist: { done: row.checklistDone, total: row.checklistTotal },
     commentCount: row.commentCount,
     hasDescription: row.hasDescription,
-    cover: toCardCover(
-      { objectKey: row.coverObjectKey, width: row.coverWidth, height: row.coverHeight },
-      covers,
-    ),
     archivedAt: toIsoOrNull(row.archivedAt),
-  };
-}
-
-/** Card restrito para quem não tem acesso: só id, lista, posição e título (ADR 0015). */
-function toLockedCard(row: CardSummaryRow): LockedCard {
-  return {
-    id: row.id,
-    listId: row.listId,
-    position: row.position,
-    title: row.title,
-    locked: true,
   };
 }
 
 async function loadSummaries(
   db: DbExecutor,
   scope: CardSummaryScope,
-  actor: CardActor,
-  covers: CoverReadContext,
-): Promise<{ row: CardSummaryRow; card: CardSummary | null }[]> {
-  const rows = await findCardSummaryRows(db, scope, actor);
+): Promise<{ row: CardSummaryRow; card: CardSummary }[]> {
+  const rows = await findCardSummaryRows(db, scope);
   if (rows.length === 0) return [];
   // Sequencial: `db` pode ser uma transação (uma conexão só).
-  const labelPairs = await findCardLabelPairs(db, scope, actor);
-  const assigneePairs = await findCardAssigneePairs(db, scope, actor);
+  const labelPairs = await findCardLabelPairs(db, scope);
+  const assigneePairs = await findCardAssigneePairs(db, scope);
   const labelIds = groupBy(
     labelPairs,
     (p) => p.cardId,
@@ -170,43 +129,24 @@ async function loadSummaries(
     (p) => p.cardId,
     (p) => p.userId,
   );
-  return rows.map((row) => ({
-    row,
-    card: row.accessible ? toCardSummary(row, labelIds, assigneeIds, covers) : null,
-  }));
+  return rows.map((row) => ({ row, card: toCardSummary(row, labelIds, assigneeIds) }));
 }
 
 /**
  * Cards do payload do quadro: não arquivados, de listas não arquivadas, por `(listId, position)`.
- * Card restrito sem acesso entra como `LockedCard`, na posição e na lista dele (ADR 0015).
+ * O acesso já foi decidido no quadro (ADR 0015): quem chega aqui enxerga todos os cards dele.
  */
-export async function loadBoardCards(
-  db: DbExecutor,
-  boardId: string,
-  actor: CardActor,
-  covers: CoverReadContext,
-): Promise<BoardCard[]> {
-  return (await loadSummaries(db, { boardId, state: 'active' }, actor, covers)).map(
-    ({ row, card }) => (card === null ? toLockedCard(row) : card),
-  );
+export async function loadBoardCards(db: DbExecutor, boardId: string): Promise<CardSummary[]> {
+  return (await loadSummaries(db, { boardId, state: 'active' })).map(({ card }) => card);
 }
 
-/**
- * Cards arquivados individualmente, com o contexto da lista, por `archivedAt` desc. Sem acesso: o
- * mesmo `LockedCard` do quadro, sem a lista de origem (scope §11, F4).
- */
-export async function loadArchivedCards(
-  db: DbExecutor,
-  boardId: string,
-  actor: CardActor,
-  covers: CoverReadContext,
-): Promise<BoardArchivedCard[]> {
-  return (await loadSummaries(db, { boardId, state: 'archived' }, actor, covers)).map(
-    ({ row, card }) =>
-      card === null
-        ? toLockedCard(row)
-        : { ...card, listName: row.listName, listArchived: row.listArchived },
-  );
+/** Cards arquivados individualmente, com o contexto da lista, por `archivedAt` desc. */
+export async function loadArchivedCards(db: DbExecutor, boardId: string): Promise<ArchivedCard[]> {
+  return (await loadSummaries(db, { boardId, state: 'archived' })).map(({ row, card }) => ({
+    ...card,
+    listName: row.listName,
+    listArchived: row.listArchived,
+  }));
 }
 
 /**
@@ -214,56 +154,40 @@ export async function loadArchivedCards(
  * atribuídos ao usuário. Ordem: `dueAt ASC NULLS LAST`, prioridade (Urgente → sem), `createdAt`.
  * Três consultas (faces, etiquetas, responsáveis) num snapshot único.
  */
-export async function getMyCards(
-  db: Database,
-  actor: CardActor,
-  covers: CoverReadContext,
-): Promise<MyCard[]> {
+export async function getMyCards(db: Database, actor: BoardActor): Promise<MyCard[]> {
   return db.transaction(
     async (tx) =>
-      // A consulta já omite o que o ator não pode abrir (RN32 e api.md §18.7 item 49).
-      (await loadSummaries(tx, { assigneeId: actor.id }, actor, covers)).flatMap(({ row, card }) =>
-        card === null
-          ? []
-          : [
-              {
-                ...card,
-                boardName: row.boardName,
-                listName: row.listName,
-                listColor: row.listColor,
-              },
-            ],
-      ),
+      // A consulta já omite cards de quadro sem acesso (ADR 0015, api.md §18.9 item 71).
+      (await loadSummaries(tx, { assigneeId: actor.id, actor })).map(({ row, card }) => ({
+        ...card,
+        boardName: row.boardName,
+        listName: row.listName,
+        listColor: row.listColor,
+      })),
     { isolationLevel: 'repeatable read', accessMode: 'read only' },
   );
 }
 
-/** Face de um card (arquivado ou não), para quem tem acesso a ele. */
-export async function loadCardSummary(
-  db: DbExecutor,
-  cardId: string,
-  actor: CardActor,
-  covers: CoverReadContext,
-): Promise<CardSummary> {
-  const [found] = await loadSummaries(db, { cardId }, actor, covers);
+/** Face de um card (arquivado ou não). O acesso é decidido no quadro, antes de chegar aqui. */
+export async function loadCardSummary(db: DbExecutor, cardId: string): Promise<CardSummary> {
+  const [found] = await loadSummaries(db, { cardId });
   if (!found) throw notFound();
-  if (found.card === null) throw cardRestricted();
   return found.card;
 }
 
+/** Detalhe do card; checa o acesso ao **quadro** (`403 BOARD_RESTRICTED`) depois do 404 do card. */
 export async function loadCardDetail(
   db: DbExecutor,
   cardId: string,
-  actor: CardActor,
-  covers: CoverReadContext,
+  actor: BoardActor,
 ): Promise<CardDetail> {
   const card = await findCardById(db, cardId);
   if (!card) throw notFound();
-  await assertCardAccess(db, card, actor);
-  const summary = await loadCardSummary(db, cardId, actor, covers);
   const board = await findBoardById(db, card.boardId);
   const list = await findListById(db, card.listId);
   if (!board || !list) throw notFound();
+  await assertBoardAccess(db, board, actor);
+  const summary = await loadCardSummary(db, cardId);
   const { checklists, items } = await findCardChecklists(db, cardId);
   const commentRows = await findCardComments(db, cardId);
 
@@ -285,7 +209,6 @@ export async function loadCardDetail(
   return {
     ...summary,
     description: card.description,
-    viewerIds: card.visibility === 'restricted' ? await findCardViewerIds(db, cardId) : [],
     completedBy: card.completedBy,
     createdBy: card.createdBy,
     createdAt: toIso(card.createdAt),
@@ -318,15 +241,14 @@ export async function loadCardDetail(
 
 /**
  * `GET /api/cards/:cardId`: detalhe (card arquivado também), num snapshot único.
- * Card restrito sem acesso → `403 CARD_RESTRICTED` (não 404: o quadro já mostra que ele existe).
+ * Card de quadro restrito sem acesso → `403 BOARD_RESTRICTED`.
  */
 export async function getCardDetail(
   db: Database,
   cardId: string,
-  actor: CardActor,
-  covers: CoverReadContext,
+  actor: BoardActor,
 ): Promise<CardDetail> {
-  return db.transaction((tx) => loadCardDetail(tx, cardId, actor, covers), {
+  return db.transaction((tx) => loadCardDetail(tx, cardId, actor), {
     isolationLevel: 'repeatable read',
     accessMode: 'read only',
   });
@@ -336,13 +258,15 @@ export async function getCardDetail(
 export async function getCardActivity(
   db: Database,
   cardId: string,
-  actor: CardActor,
+  actor: BoardActor,
 ): Promise<Activity[]> {
   return db.transaction(
     async (tx) => {
       const card = await findCardById(tx, cardId);
       if (!card) throw notFound();
-      await assertCardAccess(tx, card, actor);
+      const board = await findBoardById(tx, card.boardId);
+      if (!board) throw notFound();
+      await assertBoardAccess(tx, board, actor);
       return listCardActivities(tx, cardId);
     },
     { isolationLevel: 'repeatable read', accessMode: 'read only' },
@@ -403,15 +327,16 @@ export interface CardLock {
  * Card inexistente (ou excluído no meio) → 404. Se o card mudou de lista/quadro entre a leitura
  * e o lock, lança `CardMovedConcurrently` (a transação é refeita por `cardTransaction`).
  *
- * Depois do lock, e antes de qualquer 409, checa o acesso ao card (ADR 0015): como toda mutação de
- * card, checklist, comentário, etiqueta e responsável passa por aqui, a regra vale por construção e
- * sobre a linha já bloqueada.
+ * Depois de bloquear os quadros, e antes de qualquer 409, checa o acesso a **todos** eles (ADR
+ * 0015): como toda mutação de card, checklist, comentário, etiqueta e responsável passa por aqui, a
+ * regra vale por construção e sobre a linha já bloqueada. Mover um card para um quadro restrito sem
+ * acesso também é `403 BOARD_RESTRICTED`.
  */
 export async function lockCard(
   tx: DbExecutor,
   cardId: string,
   options: {
-    actor: CardActor;
+    actor: BoardActor;
     lockLists: boolean;
     extraBoardIds?: string[];
     extraListIds?: string[];
@@ -425,7 +350,12 @@ export async function lockCard(
     ...(options.extraBoardIds ?? []),
   ]);
   const boards = new Map(boardRows.map((row) => [row.id, row]));
-  if (!boards.has(unlocked.boardId)) throw notFound();
+  const ownBoard = boards.get(unlocked.boardId);
+  if (!ownBoard) throw notFound();
+  await assertBoardAccess(tx, ownBoard, options.actor);
+  for (const board of boardRows) {
+    if (board.id !== ownBoard.id) await assertBoardAccess(tx, board, options.actor);
+  }
 
   const listRows = options.lockLists
     ? await lockListsByIds(tx, [unlocked.listId, ...(options.extraListIds ?? [])])
@@ -437,7 +367,6 @@ export async function lockCard(
   if (card.listId !== unlocked.listId || card.boardId !== unlocked.boardId) {
     throw new CardMovedConcurrently();
   }
-  await assertCardAccess(tx, card, options.actor);
   return { card, boards, lists };
 }
 
@@ -465,6 +394,9 @@ export async function createCard(
     const found = await findListById(tx, listId);
     if (!found) throw new AppError('NOT_FOUND', LIST_NOT_FOUND_MESSAGE);
     const [board] = await lockBoardsShared(tx, [found.boardId]);
+    if (!board) throw new AppError('NOT_FOUND', LIST_NOT_FOUND_MESSAGE);
+    // Criar card não passa por `lockCard` (o card ainda não existe): o acesso é checado aqui.
+    await assertBoardAccess(tx, board, ctx.actor);
     assertBoardWritable(board);
     const list = await lockListById(tx, listId);
     if (!list) throw new AppError('NOT_FOUND', LIST_NOT_FOUND_MESSAGE);
@@ -489,7 +421,7 @@ export async function createCard(
       type: 'card_created',
       data: { listId: list.id, listName: list.name },
     });
-    return loadCardSummary(tx, card.id, ctx.actor, coverReadContext(ctx));
+    return loadCardSummary(tx, card.id);
   });
 }
 
@@ -557,7 +489,7 @@ export async function updateCard(
     if (Object.keys(changes).length > 0) {
       await updateCardById(tx, card.id, { ...changes, updatedAt: ctx.now });
     }
-    return loadCardDetail(tx, card.id, ctx.actor, coverReadContext(ctx));
+    return loadCardDetail(tx, card.id, ctx.actor);
   });
 }
 
@@ -642,7 +574,7 @@ export async function moveCard(
     }
 
     return {
-      card: await loadCardSummary(tx, card.id, ctx.actor, coverReadContext(ctx)),
+      card: await loadCardSummary(tx, card.id),
       completionChange,
       removedLabelIds,
     };
@@ -703,7 +635,7 @@ export async function changeCardCompletion(
     const expected = change === 'completed' ? 'open' : 'completed';
     if (card.status !== expected) {
       return {
-        card: await loadCardSummary(tx, card.id, ctx.actor, coverReadContext(ctx)),
+        card: await loadCardSummary(tx, card.id),
         completionChange: null,
         removedLabelIds: [],
       };
@@ -755,7 +687,7 @@ export async function changeCardCompletion(
       now: ctx.now,
     });
     return {
-      card: await loadCardSummary(tx, card.id, ctx.actor, coverReadContext(ctx)),
+      card: await loadCardSummary(tx, card.id),
       completionChange: change,
       removedLabelIds: [],
     };
@@ -782,7 +714,7 @@ export async function archiveCard(
         data: {},
       });
     }
-    return loadCardSummary(tx, card.id, ctx.actor, coverReadContext(ctx));
+    return loadCardSummary(tx, card.id);
   });
 }
 
@@ -803,8 +735,7 @@ export async function restoreCard(
       lockLists: true,
     });
     assertBoardWritable(boards.get(card.boardId));
-    if (card.archivedAt === null)
-      return loadCardSummary(tx, card.id, ctx.actor, coverReadContext(ctx));
+    if (card.archivedAt === null) return loadCardSummary(tx, card.id);
     const list = lists.get(card.listId);
     if (!list) throw notFound();
     if (list.archivedAt !== null) throw listArchived();
@@ -832,7 +763,7 @@ export async function restoreCard(
         now: ctx.now,
       });
     }
-    return loadCardSummary(tx, card.id, ctx.actor, coverReadContext(ctx));
+    return loadCardSummary(tx, card.id);
   });
 }
 
@@ -840,23 +771,13 @@ export async function restoreCard(
  * `DELETE /api/cards/:cardId` (Admin): exclusão definitiva em cascata.
  * Ordem: 404 → 403 (papel) → `409 BOARD_ARCHIVED` (quadro arquivado é somente leitura, I10).
  */
-export async function deleteCard(
-  db: Database,
-  actor: CardActor,
-  cardId: string,
-  storage: R2Client | null = null,
-  log?: { warn: (obj: object, msg: string) => void },
-): Promise<void> {
-  const objectKey = await cardTransaction(db, async (tx) => {
+export async function deleteCard(db: Database, actor: BoardActor, cardId: string): Promise<void> {
+  await cardTransaction(db, async (tx) => {
     const { card, boards } = await lockCard(tx, cardId, { actor, lockLists: false });
     if (actor.role !== 'admin') throw new AppError('FORBIDDEN', FORBIDDEN_MESSAGE);
     assertBoardWritable(boards.get(card.boardId));
-    const cover = await findCardCover(tx, card.id);
     await deleteCardById(tx, card.id);
-    return cover?.objectKey ?? null;
   });
-  // Depois do commit: falha no R2 não desfaz a exclusão (o objeto vira órfão, ADR 0016 item 4).
-  if (objectKey) await deleteCoverObject(storage, objectKey, log);
 }
 
 // ---------------------------------------------------------------------------
@@ -897,21 +818,14 @@ export async function assignCard(
       now: ctx.now,
     });
     if (inserted) {
-      const base = { cardId: card.id, boardId: card.boardId, actorId: ctx.actor.id, now: ctx.now };
-      await recordActivity(tx, { ...base, type: 'card_assignee_added', data: { userId } });
-      // RN31/RN32: em card restrito, quem vira responsável entra na lista de acesso na mesma
-      // transação — ninguém fica responsável por um card que não consegue abrir.
-      if (card.visibility === 'restricted') {
-        const addedViewer = await insertCardViewer(tx, {
-          cardId: card.id,
-          userId,
-          addedBy: ctx.actor.id,
-          now: ctx.now,
-        });
-        if (addedViewer) {
-          await recordActivity(tx, { ...base, type: 'card_viewer_added', data: { userId } });
-        }
-      }
+      await recordActivity(tx, {
+        cardId: card.id,
+        boardId: card.boardId,
+        actorId: ctx.actor.id,
+        now: ctx.now,
+        type: 'card_assignee_added',
+        data: { userId },
+      });
       await onAssigned(tx, { cardId: card.id, userId, actorId: ctx.actor.id, now: ctx.now });
     }
     return findCardAssigneeIds(tx, card.id);
@@ -944,154 +858,5 @@ export async function unassignCard(
       });
     }
     return findCardAssigneeIds(tx, card.id);
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Visibilidade e lista de acesso (Fatia 11, ADR 0015)
-// ---------------------------------------------------------------------------
-
-/**
- * `PUT /api/cards/:cardId/visibility { visibility }` (api.md §11). Idempotente.
- * - `restricted`: o **ator**, o **criador do card** e os **responsáveis atuais** entram na lista de
- *   acesso na mesma transação (RN30; cada inclusão nova gera `card_viewer_added`);
- * - `team`: a lista é apagada (`viewerIds` volta a `[]`, sem atividade por pessoa).
- * Ordem: 400 → 404 → `403 CARD_RESTRICTED` → `409 BOARD_ARCHIVED`. Card arquivado é aceito.
- */
-export async function setCardVisibility(
-  db: Database,
-  ctx: CardActionContext,
-  cardId: string,
-  visibility: CardVisibility,
-): Promise<CardDetail> {
-  return cardTransaction(db, async (tx) => {
-    const { card, boards } = await lockCard(tx, cardId, { actor: ctx.actor, lockLists: false });
-    assertBoardWritable(boards.get(card.boardId));
-    if (card.visibility === visibility)
-      return loadCardDetail(tx, card.id, ctx.actor, coverReadContext(ctx));
-
-    const base = { cardId: card.id, boardId: card.boardId, actorId: ctx.actor.id, now: ctx.now };
-    await updateCardById(tx, card.id, { visibility, updatedAt: ctx.now });
-    await recordActivity(tx, {
-      ...base,
-      type: 'card_visibility_changed',
-      data: { from: card.visibility, to: visibility },
-    });
-
-    if (visibility === 'restricted') {
-      // RN30: a lista inicial é o ator + o criador do card + os responsáveis atuais — as pessoas
-      // que já viram o card e têm contexto. Criador anonimizado fica de fora (RN38: conta
-      // anonimizada não entra em lista de acesso).
-      const assignees = await findCardAssigneeIds(tx, card.id);
-      const creator = await findUserById(tx, card.createdBy);
-      const initial = [
-        ctx.actor.id,
-        ...(creator && creator.anonymizedAt === null ? [creator.id] : []),
-        ...assignees,
-      ];
-      for (const userId of initial) {
-        const added = await insertCardViewer(tx, {
-          cardId: card.id,
-          userId,
-          addedBy: ctx.actor.id,
-          now: ctx.now,
-        });
-        if (added) {
-          await recordActivity(tx, { ...base, type: 'card_viewer_added', data: { userId } });
-        }
-      }
-    } else {
-      await deleteCardViewers(tx, card.id);
-    }
-    return loadCardDetail(tx, card.id, ctx.actor, coverReadContext(ctx));
-  });
-}
-
-/** Card `team` não tem lista de acesso para mexer (api.md §11). */
-function cardNotRestricted(): AppError {
-  return new AppError('CARD_NOT_RESTRICTED', CARD_NOT_RESTRICTED_MESSAGE);
-}
-
-/**
- * `PUT /api/cards/:cardId/viewers/:userId` (api.md §11). Idempotente.
- * Ordem: 404 (card, usuário) → `403 CARD_RESTRICTED` → `409 BOARD_ARCHIVED` →
- * `409 CARD_NOT_RESTRICTED` → `409 USER_NOT_ACTIVE` (RN37). Card arquivado é aceito.
- */
-export async function addCardViewer(
-  db: Database,
-  ctx: CardActionContext,
-  cardId: string,
-  userId: string,
-): Promise<string[]> {
-  return cardTransaction(db, async (tx) => {
-    const { card, boards } = await lockCard(tx, cardId, { actor: ctx.actor, lockLists: false });
-    if (!(await findUserById(tx, userId))) throw new AppError('NOT_FOUND', USER_NOT_FOUND_MESSAGE);
-    assertBoardWritable(boards.get(card.boardId));
-    if (card.visibility !== 'restricted') throw cardNotRestricted();
-
-    const current = await findCardViewerIds(tx, card.id);
-    if (current.includes(userId)) return current;
-
-    // `FOR SHARE` no usuário: desativar em paralelo espera ou é visto (mesma regra da atribuição).
-    const user = await lockUserShared(tx, userId);
-    if (!user) throw new AppError('NOT_FOUND', USER_NOT_FOUND_MESSAGE);
-    if (user.status !== 'active' || user.anonymizedAt !== null) {
-      throw new AppError('USER_NOT_ACTIVE', USER_NOT_ACTIVE_VIEWER_MESSAGE);
-    }
-
-    const added = await insertCardViewer(tx, {
-      cardId: card.id,
-      userId,
-      addedBy: ctx.actor.id,
-      now: ctx.now,
-    });
-    if (added) {
-      await recordActivity(tx, {
-        cardId: card.id,
-        boardId: card.boardId,
-        actorId: ctx.actor.id,
-        now: ctx.now,
-        type: 'card_viewer_added',
-        data: { userId },
-      });
-    }
-    return findCardViewerIds(tx, card.id);
-  });
-}
-
-/**
- * `DELETE /api/cards/:cardId/viewers/:userId` (api.md §11): remove da lista de acesso, inclusive a
- * si mesmo (quem se remove perde o acesso na hora). Idempotente; não há regra de "último viewer"
- * (Admin sempre alcança o card). **RN32:** responsável do card não pode perder o acesso — primeiro
- * se remove a atribuição (`409 CONFLICT`), senão "Meus cards" mostraria card bloqueado.
- */
-export async function removeCardViewer(
-  db: Database,
-  ctx: CardActionContext,
-  cardId: string,
-  userId: string,
-): Promise<string[]> {
-  return cardTransaction(db, async (tx) => {
-    const { card, boards } = await lockCard(tx, cardId, { actor: ctx.actor, lockLists: false });
-    const user = await findUserById(tx, userId);
-    if (!user) throw new AppError('NOT_FOUND', USER_NOT_FOUND_MESSAGE);
-    assertBoardWritable(boards.get(card.boardId));
-    if (card.visibility !== 'restricted') throw cardNotRestricted();
-
-    if ((await findCardAssigneeIds(tx, card.id)).includes(userId)) {
-      throw new AppError('CONFLICT', viewerIsAssigneeMessage(user.name));
-    }
-
-    if (await deleteCardViewer(tx, card.id, userId)) {
-      await recordActivity(tx, {
-        cardId: card.id,
-        boardId: card.boardId,
-        actorId: ctx.actor.id,
-        now: ctx.now,
-        type: 'card_viewer_removed',
-        data: { userId },
-      });
-    }
-    return findCardViewerIds(tx, card.id);
   });
 }

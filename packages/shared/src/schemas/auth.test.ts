@@ -177,7 +177,7 @@ describe('respostas', () => {
   const session = {
     user: { id: UUID, name: 'Ana', email: 'ana@exemplo.com', role: 'admin' },
     workspace: { name: 'Equipe', timezone: 'America/Sao_Paulo' },
-    features: { cardCovers: false },
+    features: { boardCovers: false },
   };
 
   it('setup, login e me compartilham { user, workspace, features }', () => {
