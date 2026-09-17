@@ -42,6 +42,7 @@ export type CardSummaryRow = Pick<
   | 'dueAt'
   | 'dueHasTime'
   | 'priority'
+  | 'visibility'
   | 'archivedAt'
 > & {
   hasDescription: boolean;
@@ -161,6 +162,7 @@ export async function findCardSummaryRows(
       dueAt: cards.dueAt,
       dueHasTime: cards.dueHasTime,
       priority: cards.priority,
+      visibility: cards.visibility,
       archivedAt: cards.archivedAt,
       hasDescription: sql<boolean>`(${cards.description} <> '')`,
       checklistDone: sql<number>`coalesce(${checklistAgg.done}, 0)`.mapWith(Number),

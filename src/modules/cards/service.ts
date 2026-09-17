@@ -91,6 +91,7 @@ function toCardSummary(
   assigneeIds: Map<string, string[]>,
 ): CardSummary {
   return {
+    locked: false,
     id: row.id,
     boardId: row.boardId,
     listId: row.listId,
@@ -101,11 +102,14 @@ function toCardSummary(
     dueAt: toIsoOrNull(row.dueAt),
     dueHasTime: row.dueHasTime,
     priority: row.priority,
+    visibility: row.visibility,
     labelIds: labelIds.get(row.id) ?? [],
     assigneeIds: assigneeIds.get(row.id) ?? [],
     checklist: { done: row.checklistDone, total: row.checklistTotal },
     commentCount: row.commentCount,
     hasDescription: row.hasDescription,
+    // A capa entra na tarefa 11.6 (sem R2 configurado continua `null`, ADR 0016).
+    cover: null,
     archivedAt: toIsoOrNull(row.archivedAt),
   };
 }
@@ -199,6 +203,8 @@ async function loadCardDetail(db: DbExecutor, cardId: string): Promise<CardDetai
   return {
     ...summary,
     description: card.description,
+    // A lista de acesso entra na tarefa 11.4 (card `team` responde sempre `[]`).
+    viewerIds: [],
     completedBy: card.completedBy,
     createdBy: card.createdBy,
     createdAt: toIso(card.createdAt),

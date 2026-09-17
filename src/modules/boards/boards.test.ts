@@ -9,6 +9,7 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { expectError, MISSING_ID, seedTeam, type Actor } from '../../../test/actors';
+import { unlockedCard } from '../../../test/cards';
 import { csrfHeaders } from '../../../test/app';
 import { createDbTestApp, createTestClock } from '../../../test/auth';
 import { describeDb, useTestDatabase } from '../../../test/db';
@@ -282,6 +283,7 @@ describeDb('rotas de quadros (kanban_test)', () => {
       expect(payload.cards.map((c) => c.id)).toEqual(expectedOrder);
 
       expect(payload.cards.find((c) => c.id === c1.id)).toEqual({
+        locked: false,
         id: c1.id,
         boardId: board.id,
         listId: first.id,
@@ -292,11 +294,13 @@ describeDb('rotas de quadros (kanban_test)', () => {
         dueAt: '2026-09-20T15:00:00.000Z',
         dueHasTime: true,
         priority: 'high',
+        visibility: 'team',
         labelIds: [label.id],
         assigneeIds: [member.user.id, admin.user.id],
         checklist: { done: 1, total: 3 },
         commentCount: 2,
         hasDescription: true,
+        cover: null,
         archivedAt: null,
       });
       expect(payload.cards.find((c) => c.id === c2.id)).toMatchObject({
@@ -620,7 +624,12 @@ describeDb('rotas de quadros (kanban_test)', () => {
       expect(res.statusCode).toBe(200);
       const body = boardArchivedResponseSchema.strict().parse(res.json());
       expect(body.lists.map((l) => l.id)).toEqual([newArchived.id, oldArchived.id]);
-      expect(body.cards.map((c) => [c.id, c.listName, c.listArchived])).toEqual([
+      expect(
+        body.cards.map((card) => {
+          const c = unlockedCard(card);
+          return [c.id, c.listName, c.listArchived];
+        }),
+      ).toEqual([
         [cardB.id, 'Arquivada antes', true],
         [cardA.id, 'Ativa', false],
       ]);

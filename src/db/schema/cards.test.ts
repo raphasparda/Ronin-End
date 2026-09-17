@@ -202,7 +202,7 @@ describeDb('schema: cards e card_activities (tarefas 4.2 e 5.2)', () => {
             data: type === 'card_priority_changed' ? { from: null, to: 'urgent' } : {},
           });
       }
-      expect(await db().$count(cardActivities)).toBe(12);
+      expect(await db().$count(cardActivities)).toBe(activityType.enumValues.length + 1);
       const err = await pgError(
         db().execute(
           sql`INSERT INTO card_activities (card_id, board_id, actor_id, type)

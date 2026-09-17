@@ -1,12 +1,18 @@
-import { CARD_PRIORITIES, PALETTE } from '@raphasparda/ronin-shared';
+import { CARD_PRIORITIES, CARD_VISIBILITIES, PALETTE } from '@raphasparda/ronin-shared';
 import { expect, it } from 'vitest';
 
 import { describeDb, useTestDatabase } from '../../../test/db';
 
-import { activityType, cardPriority, notificationType, paletteColor } from './index';
+import {
+  activityType,
+  cardPriority,
+  cardVisibility,
+  notificationType,
+  paletteColor,
+} from './index';
 
 /** Estrutura aplicada pelas migrations (catálogo do PostgreSQL), não só o que o Drizzle declara. */
-describeDb('schema: catálogo do MVP (fatias 2–9)', () => {
+describeDb('schema: catálogo do MVP (fatias 2–9) e da fatia 11', () => {
   const { pool } = useTestDatabase();
 
   async function enumValues(name: string): Promise<string[]> {
@@ -29,7 +35,9 @@ describeDb('schema: catálogo do MVP (fatias 2–9)', () => {
       'boards',
       'card_activities',
       'card_assignees',
+      'card_covers',
       'card_labels',
+      'card_viewers',
       'cards',
       'checklist_items',
       'checklists',
@@ -50,6 +58,16 @@ describeDb('schema: catálogo do MVP (fatias 2–9)', () => {
     expect(cardPriority.enumValues).toEqual([...CARD_PRIORITIES]);
     expect(await enumValues('activity_type')).toEqual(activityType.enumValues);
     expect(await enumValues('activity_type')).toContain('card_priority_changed');
+    // Fatia 11: valores novos entram no fim do enum (migration 0008).
+    expect(await enumValues('activity_type').then((values) => values.slice(-5))).toEqual([
+      'card_visibility_changed',
+      'card_viewer_added',
+      'card_viewer_removed',
+      'card_cover_changed',
+      'card_cover_removed',
+    ]);
+    expect(await enumValues('card_visibility')).toEqual([...CARD_VISIBILITIES]);
+    expect(cardVisibility.enumValues).toEqual([...CARD_VISIBILITIES]);
     expect(await enumValues('notification_type')).toEqual(notificationType.enumValues);
     expect(await enumValues('auth_token_kind')).toEqual(['invite', 'password_reset']);
     expect(await enumValues('card_status')).toEqual(['open', 'completed']);

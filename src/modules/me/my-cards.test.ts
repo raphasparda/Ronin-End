@@ -123,6 +123,7 @@ describeDb('GET /api/me/cards (kanban_test)', () => {
 
     expect(await myCards()).toEqual([
       {
+        locked: false,
         id: mine.id,
         boardId: board.id,
         listId: list.id,
@@ -133,11 +134,13 @@ describeDb('GET /api/me/cards (kanban_test)', () => {
         dueAt: '2026-09-20T15:00:00.000Z',
         dueHasTime: true,
         priority: 'high',
+        visibility: 'team',
         labelIds: [label.id],
         assigneeIds: [admin.user.id, member.user.id],
         checklist: { done: 0, total: 0 },
         commentCount: 1,
         hasDescription: true,
+        cover: null,
         archivedAt: null,
         boardName: 'Marketing',
         listName: 'A fazer',

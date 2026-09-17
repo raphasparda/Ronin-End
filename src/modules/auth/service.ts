@@ -29,7 +29,7 @@ export const TOO_MANY_ATTEMPTS_MESSAGE =
   'Muitas tentativas de login. Aguarde alguns minutos e tente de novo.';
 export const SETUP_REQUIRED_MESSAGE = 'A instância ainda não foi configurada.';
 
-export interface LoginResult extends AuthSessionResponse {
+export interface LoginResult extends Omit<AuthSessionResponse, 'features'> {
   /** Token cru para o cookie. */
   token: string;
 }

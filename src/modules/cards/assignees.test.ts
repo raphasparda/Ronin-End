@@ -13,6 +13,7 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { expectError, MISSING_ID, seedActor, seedTeam, type Actor } from '../../../test/actors';
+import { unlockedCard } from '../../../test/cards';
 import { csrfHeaders } from '../../../test/app';
 import { createDbTestApp, createTestClock } from '../../../test/auth';
 import { describeDb, useTestDatabase } from '../../../test/db';
@@ -145,7 +146,7 @@ describeDb('responsáveis e prioridade do card (kanban_test)', () => {
         url: `/api/boards/${board.id}`,
         headers: { cookie: member.cookie },
       });
-      expect(boardPayloadSchema.parse(payload.json()).cards[0]?.assigneeIds).toEqual([
+      expect(unlockedCard(boardPayloadSchema.parse(payload.json()).cards[0]).assigneeIds).toEqual([
         admin.user.id,
         member.user.id,
       ]);

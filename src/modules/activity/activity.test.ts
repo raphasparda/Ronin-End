@@ -33,7 +33,7 @@ it('recordActivity: `data` precisa casar com `type` (checado pelo tsc)', () => {
 describeDb('recordActivity (kanban_test)', () => {
   const { db } = useTestDatabase();
 
-  it('grava os 11 tipos; leitura do mais recente ao mais antigo, mesmo no mesmo instante; append-only', async () => {
+  it('grava todos os tipos; leitura do mais recente ao mais antigo, mesmo no mesmo instante; append-only', async () => {
     const { user, board, list, card } = await insertCardGraph(db());
     const now = new Date('2026-09-16T12:00:00.000Z');
     const base = { cardId: card.id, boardId: board.id, actorId: user.id, now };
@@ -63,6 +63,11 @@ describeDb('recordActivity (kanban_test)', () => {
       { ...base, type: 'card_reopened', data: {} },
       { ...base, type: 'card_archived', data: {} },
       { ...base, type: 'card_restored', data: {} },
+      { ...base, type: 'card_visibility_changed', data: { from: 'team', to: 'restricted' } },
+      { ...base, type: 'card_viewer_added', data: { userId: user.id } },
+      { ...base, type: 'card_viewer_removed', data: { userId: user.id } },
+      { ...base, type: 'card_cover_changed', data: {} },
+      { ...base, type: 'card_cover_removed', data: {} },
     ];
     await db().transaction(async (tx) => {
       for (const entry of entries) await recordActivity(tx, entry);

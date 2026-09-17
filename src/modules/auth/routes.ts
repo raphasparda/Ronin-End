@@ -6,6 +6,7 @@ import {
 import type { FastifyPluginCallbackZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
+import { appFeatures } from '../../config/features';
 import { loginRouteRateLimit } from '../../plugins/rate-limit';
 import { requireUser } from '../../plugins/session';
 import { getWorkspace } from '../workspace/service';
@@ -39,7 +40,7 @@ export const authRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
         { ip: request.ip, currentSessionId: request.sessionId },
       );
       reply.setSessionCookie(token);
-      return { user, workspace };
+      return { user, workspace, features: appFeatures() };
     },
   );
 
@@ -71,7 +72,11 @@ export const authRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
         response: { 200: authSessionResponseSchema, 401: errorResponseSchema },
       },
     },
-    async (request) => ({ user: requireUser(request), workspace: await getWorkspace(app.db) }),
+    async (request) => ({
+      user: requireUser(request),
+      workspace: await getWorkspace(app.db),
+      features: appFeatures(),
+    }),
   );
 
   done();

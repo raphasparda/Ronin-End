@@ -57,6 +57,13 @@
       "when": 1789615652854,
       "tag": "0007_notifications",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789672069083,
+      "tag": "0008_card_visibility_and_covers",
+      "breakpoints": true
     }
   ]
 }

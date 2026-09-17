@@ -6,6 +6,7 @@ import {
 } from '@raphasparda/ronin-shared';
 import type { FastifyPluginCallbackZod } from 'fastify-type-provider-zod';
 
+import { appFeatures } from '../../config/features';
 import { perIpRateLimit } from '../../plugins/rate-limit';
 
 import { getSetupStatus, performSetup } from './service';
@@ -59,7 +60,7 @@ export const setupRoutes: FastifyPluginCallbackZod<SetupRoutesOptions> = (app, o
         request.body,
       );
       reply.setSessionCookie(token);
-      return reply.status(201).send({ user, workspace });
+      return reply.status(201).send({ user, workspace, features: appFeatures() });
     },
   );
 

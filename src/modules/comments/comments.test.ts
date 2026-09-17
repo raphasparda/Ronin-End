@@ -10,6 +10,7 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { expectError, MISSING_ID, seedActor, seedTeam, type Actor } from '../../../test/actors';
+import { unlockedCard } from '../../../test/cards';
 import { csrfHeaders } from '../../../test/app';
 import { createDbTestApp, createTestClock } from '../../../test/auth';
 import { describeDb, useTestDatabase } from '../../../test/db';
@@ -133,7 +134,7 @@ describeDb('rotas de comentários (kanban_test)', () => {
           })
         ).json(),
       );
-      expect(payload.cards[0]?.commentCount).toBe(2);
+      expect(unlockedCard(payload.cards[0]).commentCount).toBe(2);
       expect(await db().$count(cardActivities)).toBe(1); // só card_created
     });
 

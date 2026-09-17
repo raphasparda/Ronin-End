@@ -117,7 +117,7 @@ export async function lookupInvite(
   return { email: row.email, role: row.role, expiresAt: toIso(row.expiresAt) };
 }
 
-export interface AcceptInviteResult extends AuthSessionResponse {
+export interface AcceptInviteResult extends Omit<AuthSessionResponse, 'features'> {
   /** Token cru para o cookie. */
   token: string;
 }

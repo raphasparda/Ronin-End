@@ -49,7 +49,7 @@ export function isSetupTokenValid(
   return timingSafeEqual(digest(expected), digest(provided));
 }
 
-export interface SetupResult extends AuthSessionResponse {
+export interface SetupResult extends Omit<AuthSessionResponse, 'features'> {
   token: string;
 }
 

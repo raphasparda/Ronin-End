@@ -149,6 +149,7 @@ describeDb('rotas de cards (kanban_test)', () => {
       expect(res.statusCode).toBe(201);
       const second = cardSummaryResponseSchema.strict().parse(res.json()).card;
       expect(second).toEqual({
+        locked: false,
         id: second.id,
         boardId: board.id,
         listId: todo.id,
@@ -159,11 +160,13 @@ describeDb('rotas de cards (kanban_test)', () => {
         dueAt: null,
         dueHasTime: false,
         priority: null,
+        visibility: 'team',
         labelIds: [],
         assigneeIds: [],
         checklist: { done: 0, total: 0 },
         commentCount: 0,
         hasDescription: false,
+        cover: null,
         archivedAt: null,
       });
       expect(second.position > first.position).toBe(true);
