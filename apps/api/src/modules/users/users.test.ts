@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+
 import {
   adminUserResponseSchema,
   adminUsersResponseSchema,
@@ -12,7 +14,15 @@ import { csrfHeaders } from '../../../test/app';
 import { createDbTestApp, createTestClock } from '../../../test/auth';
 import { describeDb, useTestDatabase } from '../../../test/db';
 import type { App } from '../../app';
-import { authTokens, sessions, users, workspace } from '../../db/schema';
+import {
+  authTokens,
+  sessions,
+  users,
+  workspace,
+  type AuthTokenRow,
+  type NewAuthTokenRow,
+} from '../../db/schema';
+import { sha256Hex } from '../../lib/tokens';
 
 import { changeUserRole, deactivateUser } from './service';
 
@@ -232,6 +242,105 @@ describeDb('usuários e administração (kanban_test)', () => {
           'CSRF_REJECTED',
         );
         expectError(await userAction(member.user.id, name, csrfHeaders()), 401, 'UNAUTHENTICATED');
+      }
+    });
+  });
+
+  describe('tokens emitidos por quem perde o papel de Admin (api.md §18.5)', () => {
+    const insertToken = async (values: Partial<NewAuthTokenRow> & { createdBy: string }) => {
+      const [row] = await db()
+        .insert(authTokens)
+        .values({
+          kind: 'invite',
+          role: 'member',
+          tokenHash: sha256Hex(randomBytes(16).toString('hex')),
+          expiresAt: new Date(clock.now().getTime() + 86_400_000),
+          ...values,
+        })
+        .returning();
+      if (!row) throw new Error('insert falhou');
+      return row;
+    };
+
+    /**
+     * `issuer` (Admin) emite, pela API, um convite e um link de redefinição para `member`; os
+     * tokens de controle (de outro Admin, já usado, expirado, já revogado) não podem mudar.
+     */
+    async function seedIssuerTokens(issuer: Actor) {
+      const invite = await app.inject({
+        method: 'POST',
+        url: '/api/admin/invites',
+        headers: issuer.headers,
+        payload: { email: null, role: 'member' },
+      });
+      expect(invite.statusCode).toBe(201);
+      const reset = await app.inject({
+        method: 'POST',
+        url: `/api/admin/users/${member.user.id}/password-reset-links`,
+        headers: issuer.headers,
+      });
+      expect(reset.statusCode).toBe(201);
+
+      const past = new Date(clock.now().getTime() - 60_000);
+      const controls = [
+        await insertToken({ createdBy: admin.user.id }),
+        await insertToken({ createdBy: issuer.user.id, usedAt: past }),
+        await insertToken({ createdBy: issuer.user.id, expiresAt: past }),
+        await insertToken({ createdBy: issuer.user.id, revokedAt: past }),
+      ];
+      const pendingIds = (
+        await db().select().from(authTokens).where(eq(authTokens.createdBy, issuer.user.id))
+      )
+        .filter((t) => !controls.some((c) => c.id === t.id))
+        .map((t) => t.id);
+      expect(pendingIds).toHaveLength(2);
+      return { pendingIds, controls };
+    }
+
+    async function expectRevoked(pendingIds: string[], controls: AuthTokenRow[]) {
+      const rows = await db().select().from(authTokens);
+      const byId = new Map(rows.map((r) => [r.id, r]));
+      for (const id of pendingIds) expect(byId.get(id)?.revokedAt).toEqual(clock.now());
+      for (const control of controls) {
+        expect(byId.get(control.id)?.revokedAt).toEqual(control.revokedAt);
+      }
+    }
+
+    it('desativar um Admin revoga, na mesma transação, convites e redefinições pendentes que ele criou', async () => {
+      const issuer = await seedActor(db(), { role: 'admin' }, clock.now());
+      const { pendingIds, controls } = await seedIssuerTokens(issuer);
+      clock.advance(1000);
+
+      expect((await userAction(issuer.user.id, 'deactivate')).statusCode).toBe(200);
+      await expectRevoked(pendingIds, controls);
+    });
+
+    it('rebaixar um Admin para Member revoga os tokens pendentes que ele criou; reatribuir o mesmo papel não mexe', async () => {
+      const issuer = await seedActor(db(), { role: 'admin' }, clock.now());
+      const { pendingIds, controls } = await seedIssuerTokens(issuer);
+      clock.advance(1000);
+
+      // Mesmo papel: no-op, nada revogado.
+      expect((await patchRole(issuer.user.id, 'admin')).statusCode).toBe(200);
+      const untouched = await db().select().from(authTokens);
+      for (const id of pendingIds) {
+        expect(untouched.find((t) => t.id === id)?.revokedAt).toBeNull();
+      }
+
+      expect((await patchRole(issuer.user.id, 'member')).statusCode).toBe(200);
+      await expectRevoked(pendingIds, controls);
+    });
+
+    it('falha na regra (LAST_ADMIN) não revoga nada (rollback)', async () => {
+      const issuer = await seedActor(db(), { role: 'admin' }, clock.now());
+      const { pendingIds } = await seedIssuerTokens(issuer);
+      await db().update(users).set({ status: 'deactivated' }).where(eq(users.id, admin.user.id));
+      await expect(
+        deactivateUser(db(), { actorId: member.user.id, now: clock.now() }, issuer.user.id),
+      ).rejects.toMatchObject({ code: 'LAST_ADMIN' });
+      const rows = await db().select().from(authTokens);
+      for (const id of pendingIds) {
+        expect(rows.find((t) => t.id === id)?.revokedAt).toBeNull();
       }
     });
   });

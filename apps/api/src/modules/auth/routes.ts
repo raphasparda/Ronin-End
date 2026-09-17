@@ -2,6 +2,7 @@ import { authSessionResponseSchema, errorResponseSchema, loginRequestSchema } fr
 import type { FastifyPluginCallbackZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
+import { loginRouteRateLimit } from '../../plugins/rate-limit';
 import { requireUser } from '../../plugins/session';
 import { getWorkspace } from '../workspace/service';
 
@@ -12,7 +13,7 @@ export const authRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
   app.post(
     '/api/auth/login',
     {
-      config: { public: true },
+      config: { public: true, rateLimit: loginRouteRateLimit() },
       schema: {
         tags: ['autenticação'],
         summary: 'Entrar com e-mail e senha (cria sessão e grava o cookie)',

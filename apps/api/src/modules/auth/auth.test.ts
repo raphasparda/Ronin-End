@@ -12,11 +12,14 @@ import {
   seedUser,
   seedWorkspace,
   sessionCookieOf,
+  countingPasswords,
 } from '../../../test/auth';
 import { describeDb, useTestDatabase } from '../../../test/db';
 import type { App } from '../../app';
 import { authThrottle, sessions, users } from '../../db/schema';
+import type { PasswordHasher } from '../../lib/password';
 import { sha256Hex } from '../../lib/tokens';
+import { LOGIN_ROUTE_RATE_LIMIT } from '../../plugins/rate-limit';
 
 import { INVALID_CREDENTIALS_MESSAGE } from './service';
 import { LOGIN_THROTTLE } from './throttle';
@@ -32,13 +35,13 @@ describeDb('módulo auth (kanban_test)', () => {
     clock.set(new Date('2026-09-16T12:00:00.000Z'));
   });
 
-  async function start(): Promise<App> {
-    app = await createDbTestApp({ clock: clock.now });
+  async function start(passwords?: PasswordHasher): Promise<App> {
+    app = await createDbTestApp({ clock: clock.now, ...(passwords ? { passwords } : {}) });
     return app;
   }
 
-  async function seeded(): Promise<{ a: App; userId: string }> {
-    const a = await start();
+  async function seeded(passwords?: PasswordHasher): Promise<{ a: App; userId: string }> {
+    const a = await start(passwords);
     await seedWorkspace(db());
     const user = await seedUser(db());
     return { a, userId: user.id };
@@ -185,6 +188,110 @@ describeDb('módulo auth (kanban_test)', () => {
 
       // Outro IP segue normal.
       expect((await login(a, good, { remoteAddress: '198.51.100.21' })).statusCode).toBe(200);
+    });
+
+    it('rajada paralela de 30 senhas erradas: no máximo 5 chegam ao Argon2, o resto → 429; senha certa depois → 429', async () => {
+      const { hasher, count } = countingPasswords();
+      const { a } = await seeded(hasher);
+      const burst = LOGIN_ROUTE_RATE_LIMIT.max;
+      const results = await Promise.all(
+        Array.from({ length: burst }, (_, i) =>
+          login(a, { email: 'ana@exemplo.com', password: `errada-${i}-xxxxx` }),
+        ),
+      );
+
+      const codes = results.map((r) => errorResponseSchema.parse(r.json()).error.code);
+      const invalid = codes.filter((c) => c === 'INVALID_CREDENTIALS').length;
+      const blocked = codes.filter((c) => c === 'TOO_MANY_ATTEMPTS').length;
+      expect(count()).toBeLessThanOrEqual(LOGIN_THROTTLE.emailMaxFailures);
+      expect(invalid).toBe(count());
+      expect(invalid).toBe(LOGIN_THROTTLE.emailMaxFailures);
+      expect(blocked).toBe(burst - invalid);
+      for (const res of results) expect([401, 429]).toContain(res.statusCode);
+
+      // Senha certa depois do bloqueio (de outro IP, fora do limite de rota): 429 pelo e-mail.
+      const correct = await login(a, good, { remoteAddress: '198.51.100.99' });
+      expect(correct.statusCode).toBe(429);
+      expect(errorResponseSchema.parse(correct.json()).error.code).toBe('TOO_MANY_ATTEMPTS');
+      expect(correct.headers['set-cookie']).toBeUndefined();
+      expect(count()).toBe(LOGIN_THROTTLE.emailMaxFailures);
+
+      // As recusadas pelo e-mail nem reservam no IP: só as 5 verificadas contaram.
+      const [ipRow] = await db()
+        .select()
+        .from(authThrottle)
+        .where(eq(authThrottle.key, 'ip:127.0.0.1'));
+      expect(ipRow).toMatchObject({ failures: LOGIN_THROTTLE.emailMaxFailures, lockedUntil: null });
+      expect(await db().$count(sessions)).toBe(0);
+    });
+
+    it('rajada paralela com a senha certa no meio de erradas, depois do bloqueio → 429', async () => {
+      const { hasher, count } = countingPasswords();
+      const { a } = await seeded(hasher);
+      const wrong = (i: number) => login(a, { ...good, password: `errada-${i}-xxxxx` });
+      const first = await Promise.all(
+        Array.from({ length: LOGIN_THROTTLE.emailMaxFailures + 5 }, (_, i) => wrong(i)),
+      );
+      expect(first.filter((r) => r.statusCode === 401)).toHaveLength(
+        LOGIN_THROTTLE.emailMaxFailures,
+      );
+      const second = await Promise.all([wrong(100), login(a, good), wrong(101), login(a, good)]);
+      for (const res of second) {
+        expect(res.statusCode).toBe(429);
+        expect(errorResponseSchema.parse(res.json()).error.code).toBe('TOO_MANY_ATTEMPTS');
+      }
+      expect(count()).toBe(LOGIN_THROTTLE.emailMaxFailures);
+    });
+
+    it('rajada paralela de e-mails variados: no máximo 20 chegam ao Argon2 (bloqueio por IP)', async () => {
+      const { hasher, count } = countingPasswords();
+      const { a } = await seeded(hasher);
+      const results = await Promise.all(
+        Array.from({ length: LOGIN_ROUTE_RATE_LIMIT.max }, (_, i) =>
+          login(a, { email: `pessoa${i}@exemplo.com`, password: 'senha-errada-demais' }),
+        ),
+      );
+      expect(count()).toBe(LOGIN_THROTTLE.ipMaxFailures);
+      expect(results.filter((r) => r.statusCode === 401)).toHaveLength(
+        LOGIN_THROTTLE.ipMaxFailures,
+      );
+      expect(results.filter((r) => r.statusCode === 429)).toHaveLength(
+        LOGIN_ROUTE_RATE_LIMIT.max - LOGIN_THROTTLE.ipMaxFailures,
+      );
+      // As recusadas pelo IP devolveram a reserva do e-mail: só as 20 verificadas contaram.
+      const rows = await db().select().from(authThrottle);
+      const emailFailures = rows
+        .filter((r) => r.key.startsWith('email:'))
+        .reduce((sum, r) => sum + r.failures, 0);
+      expect(emailFailures).toBe(LOGIN_THROTTLE.ipMaxFailures);
+    });
+
+    it('login com sucesso não conta no IP e não zera as falhas do IP', async () => {
+      const { a } = await seeded();
+      const ip = '198.51.100.30';
+      await login(a, { ...good, password: 'senha-errada-demais' }, { remoteAddress: ip });
+      for (let i = 0; i < LOGIN_THROTTLE.ipMaxFailures + 1; i++) {
+        expect((await login(a, good, { remoteAddress: ip })).statusCode).toBe(200);
+      }
+      const [ipRow] = await db()
+        .select()
+        .from(authThrottle)
+        .where(eq(authThrottle.key, `ip:${ip}`));
+      expect(ipRow).toMatchObject({ failures: 1, lockedUntil: null });
+    });
+
+    it('limite de rota: 30 req/min por IP → 31ª 429 RATE_LIMITED; outro IP segue', async () => {
+      expect(LOGIN_ROUTE_RATE_LIMIT).toEqual({ max: 30, timeWindowMs: 60_000 });
+      const { a } = await seeded();
+      // Corpo inválido: não chega ao serviço, mas conta no limite de rota.
+      for (let i = 0; i < LOGIN_ROUTE_RATE_LIMIT.max; i++) {
+        expect((await login(a, { email: 'x', password: '' })).statusCode).toBe(400);
+      }
+      const limited = await login(a, good);
+      expect(limited.statusCode).toBe(429);
+      expect(errorResponseSchema.parse(limited.json()).error.code).toBe('RATE_LIMITED');
+      expect(Number(limited.headers['retry-after'])).toBeGreaterThan(0);
+      expect((await login(a, good, { remoteAddress: '198.51.100.40' })).statusCode).toBe(200);
     });
 
     it('nova sessão a cada login; a sessão anterior do mesmo navegador é descartada', async () => {

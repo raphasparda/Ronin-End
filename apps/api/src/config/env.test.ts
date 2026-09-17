@@ -35,7 +35,13 @@ describe('parseEnv', () => {
   });
 
   it('converte PORT e TRUST_PROXY', () => {
-    const env = parseEnv({ ...base, PORT: '4010', TRUST_PROXY: 'true', NODE_ENV: 'production' });
+    const env = parseEnv({
+      ...base,
+      APP_ORIGIN: 'https://kanban.example',
+      PORT: '4010',
+      TRUST_PROXY: 'true',
+      NODE_ENV: 'production',
+    });
     expect(env.PORT).toBe(4010);
     expect(env.TRUST_PROXY).toBe(true);
     expect(parseEnv({ ...base, TRUST_PROXY: 'false' }).TRUST_PROXY).toBe(false);
@@ -61,6 +67,35 @@ describe('parseEnv', () => {
     [{ LOG_LEVEL: 'verbose' }, 'LOG_LEVEL'],
   ])('rejeita %o', (override, variable) => {
     expect(issuesOf({ ...base, ...override })).toContain(variable);
+  });
+
+  describe('NODE_ENV × protocolo de APP_ORIGIN (fail-closed)', () => {
+    it('produção exige https', () => {
+      expect(issuesOf({ ...base, NODE_ENV: 'production' })).toEqual(['APP_ORIGIN']);
+      expect(
+        issuesOf({ ...base, NODE_ENV: 'production', APP_ORIGIN: 'http://kanban.example' }),
+      ).toEqual(['APP_ORIGIN']);
+      expect(
+        parseEnv({ ...base, NODE_ENV: 'production', APP_ORIGIN: 'https://kanban.example' }),
+      ).toMatchObject({ NODE_ENV: 'production', APP_ORIGIN: 'https://kanban.example' });
+    });
+
+    it.each(['development', 'test', undefined])(
+      'https com NODE_ENV=%s → erro (produção sem NODE_ENV=production)',
+      (nodeEnv) => {
+        expect(
+          issuesOf({ ...base, NODE_ENV: nodeEnv, APP_ORIGIN: 'https://kanban.example' }),
+        ).toEqual(['NODE_ENV']);
+      },
+    );
+
+    it('desenvolvimento local em http continua válido', () => {
+      expect(parseEnv({ ...base, APP_ORIGIN: 'http://127.0.0.1:5310' })).toMatchObject({
+        NODE_ENV: 'development',
+        APP_ORIGIN: 'http://127.0.0.1:5310',
+      });
+      expect(parseEnv({ ...base, NODE_ENV: 'test' }).NODE_ENV).toBe('test');
+    });
   });
 
   it('não expõe valores na mensagem de erro', () => {

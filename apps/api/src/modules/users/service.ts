@@ -4,7 +4,11 @@ import type { Database, DbExecutor } from '../../db/client';
 import type { UserRow } from '../../db/schema';
 import { AppError } from '../../lib/app-error';
 import { toIso } from '../../lib/dates';
-import { revokeUnusedPasswordResets, scrubAuthTokensOfUser } from '../auth-tokens/repository';
+import {
+  revokePendingTokensCreatedBy,
+  revokeUnusedPasswordResets,
+  scrubAuthTokensOfUser,
+} from '../auth-tokens/repository';
 import { emailThrottleKey } from '../auth/throttle';
 import { deleteNotificationsOfUser } from '../notifications/repository';
 import { deleteUserSessions } from '../sessions/service';
@@ -68,7 +72,8 @@ async function lockTargetOrThrow(tx: DbExecutor, userId: string): Promise<UserRo
 
 /**
  * `PATCH /api/admin/users/:userId { role }`. Ordem: 404 → a si mesmo (rebaixar) → anonimizado →
- * último Admin ativo. Mesmo papel = no-op.
+ * último Admin ativo. Mesmo papel = no-op. Rebaixar para Member revoga, na mesma transação, os
+ * convites e links de redefinição pendentes que ele criou (api.md §18.5).
  */
 export async function changeUserRole(
   db: Database,
@@ -92,13 +97,17 @@ export async function changeUserRole(
     }
     const updated = await updateUserById(tx, target.id, { role, updatedAt: ctx.now });
     if (!updated) throw new AppError('NOT_FOUND', USER_NOT_FOUND_MESSAGE);
+    if (target.role === 'admin' && role === 'member') {
+      await revokePendingTokensCreatedBy(tx, target.id, ctx.now);
+    }
     return toAdminUser(updated);
   });
 }
 
 /**
  * `POST /api/admin/users/:userId/deactivate`. Não a si mesmo; não o último Admin ativo. Apaga as
- * sessões e revoga as redefinições pendentes. Idempotente.
+ * sessões, revoga as redefinições pendentes para ele e os convites/redefinições pendentes que ele
+ * criou (api.md §18.5). Idempotente.
  */
 export async function deactivateUser(
   db: Database,
@@ -123,6 +132,7 @@ export async function deactivateUser(
     if (!updated) throw new AppError('NOT_FOUND', USER_NOT_FOUND_MESSAGE);
     await deleteUserSessions(tx, locked.id);
     await revokeUnusedPasswordResets(tx, locked.id, ctx.now);
+    await revokePendingTokensCreatedBy(tx, locked.id, ctx.now);
     return toAdminUser(updated);
   });
 }
@@ -152,6 +162,7 @@ export async function reactivateUser(
  * como Admin ativo. Irreversível. Na mesma transação:
  * - nome "Usuário removido", e-mail e hash nulos, `anonymized_at`;
  * - apaga sessões, links de redefinição do usuário, notificações recebidas e o throttle do e-mail;
+ * - revoga convites e redefinições pendentes que ele criou (api.md §18.5);
  * - tira o e-mail dos convites ligados a ele (revogando algum ainda pendente).
  * Cards, responsáveis, comentários, atividades e notificações que ele gerou para outros permanecem
  * (nome resolvido na leitura).
@@ -176,6 +187,7 @@ export async function anonymizeUser(
     const updated = await anonymizeUserRow(tx, target.id, ctx.now);
     if (!updated) throw new AppError('NOT_FOUND', USER_NOT_FOUND_MESSAGE);
     await deleteUserSessions(tx, target.id);
+    await revokePendingTokensCreatedBy(tx, target.id, ctx.now);
     await scrubAuthTokensOfUser(tx, target, ctx.now);
     await deleteNotificationsOfUser(tx, target.id);
     if (target.email !== null) await deleteEmailThrottle(tx, emailThrottleKey(target.email));

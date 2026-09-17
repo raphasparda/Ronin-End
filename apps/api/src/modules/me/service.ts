@@ -8,8 +8,8 @@ import {
 import type { Database } from '../../db/client';
 import { AppError } from '../../lib/app-error';
 import type { PasswordHasher } from '../../lib/password';
-import { emailThrottleKey, findActiveLock, LOGIN_THROTTLE, recordFailure } from '../auth/throttle';
-import { TOO_MANY_ATTEMPTS_MESSAGE } from '../auth/service';
+import { tooManyAttempts } from '../auth/service';
+import { emailThrottleKey, LOGIN_THROTTLE, releaseAttempt, reserveAttempt } from '../auth/throttle';
 import { deleteUserSessions } from '../sessions/service';
 import { findUserById, updateActiveUserPassword, updateUserById } from '../users/repository';
 
@@ -29,8 +29,8 @@ export async function updateMyProfile(
 
 /**
  * `POST /api/me/password` (api.md §6). Ordem: nova senha igual ao e-mail (400 em `newPassword`) →
- * bloqueio ativo do e-mail (429, o mesmo do login) → senha atual (errada: conta no throttle por
- * e-mail e responde `400 PASSWORD_INCORRECT`) → grava o hash e apaga as outras sessões.
+ * reserva atômica no throttle do e-mail (bloqueado: 429, o mesmo do login) → senha atual
+ * (errada: a reserva conta como falha e responde `400 PASSWORD_INCORRECT`; certa: devolvida) → grava o hash e apaga as outras sessões.
  */
 export async function changeMyPassword(
   deps: { db: Database; passwords: PasswordHasher; now: Date },
@@ -46,23 +46,18 @@ export async function changeMyPassword(
     });
   }
 
+  // Reserva atômica antes do Argon2 (api.md §18.5): rajada paralela não passa de 5 verificações.
   const emailKey = emailThrottleKey(sessionUser.email);
-  const lockedUntil = await findActiveLock(db, [emailKey], now);
-  if (lockedUntil) {
-    const retryAfter = Math.max(1, Math.ceil((lockedUntil.getTime() - now.getTime()) / 1000));
-    throw new AppError('TOO_MANY_ATTEMPTS', TOO_MANY_ATTEMPTS_MESSAGE, {
-      headers: { 'retry-after': String(retryAfter) },
-    });
-  }
+  const attempt = await reserveAttempt(db, emailKey, LOGIN_THROTTLE.emailMaxFailures, now);
+  if (!attempt.allowed) throw tooManyAttempts(attempt.lockedUntil, now);
 
   const user = await findUserById(db, sessionUser.id);
   const currentOk =
     user?.passwordHash != null &&
     (await passwords.verify(user.passwordHash, input.currentPassword));
-  if (!currentOk) {
-    await recordFailure(db, emailKey, LOGIN_THROTTLE.emailMaxFailures, now);
-    throw new AppError('PASSWORD_INCORRECT', PASSWORD_INCORRECT_MESSAGE);
-  }
+  // Errada: a reserva fica (conta como falha). Certa: devolvida (a troca não zera o e-mail).
+  if (!currentOk) throw new AppError('PASSWORD_INCORRECT', PASSWORD_INCORRECT_MESSAGE);
+  await releaseAttempt(db, emailKey, LOGIN_THROTTLE.emailMaxFailures);
 
   const passwordHash = await passwords.hash(input.newPassword);
   await db.transaction(async (tx) => {

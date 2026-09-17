@@ -7,6 +7,7 @@ import {
 import type { FastifyPluginCallbackZod } from 'fastify-type-provider-zod';
 
 import { errorResponses, noContentSchema } from '../../lib/route-schemas';
+import { changePasswordRateLimit } from '../../plugins/rate-limit';
 import { requireUser } from '../../plugins/session';
 
 import { getMyCards } from '../cards/service';
@@ -33,6 +34,7 @@ export const meRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
   app.post(
     '/api/me/password',
     {
+      config: { rateLimit: changePasswordRateLimit() },
       schema: {
         tags: ['eu'],
         summary: 'Troca a senha (mantém só a sessão atual)',

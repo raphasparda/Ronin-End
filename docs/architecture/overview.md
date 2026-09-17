@@ -4,6 +4,7 @@
 > v1.2: alinhado ao `scope.md` v2: sem gamificação; cor por lista (paleta fixa); prioridade do card; reabrir vai para o topo; operação em VPS (banco fechado, backup fora da VPS, volta após reboot).
 > v1.3: CSP restrita na API e `no-store` em toda resposta (§6.7); `text/plain` recusado com `415 UNSUPPORTED_MEDIA_TYPE` (§6.3).
 > v1.4: §5 implementado para as fatias 2–9 (migrations `0001`–`0007`): FK composta de I6, `CHECK`s extras, trigger append-only da atividade e índices de FK para cascatas (§5.1.1).
+> v1.5: revisão de segurança: reserva atômica de tentativa no login e na troca de senha e limites de rota (§6.4), revogação dos tokens de quem perde o papel (§6.5), logs de erro de banco sem valores (§6.7), configuração fail-closed `NODE_ENV` × `APP_ORIGIN` e requisitos do deploy (§3, §6.8). Detalhes em `api.md` §18.5.
 > Fonte de requisitos: `docs/product/scope.md` (inclui "Decisões confirmadas pelo cliente").
 > Documentos irmãos: `api.md` (contrato REST), `plan.md` (plano de implementação), `adr/` (decisões).
 
@@ -193,9 +194,9 @@ Variáveis de ambiente (`.env.example`):
 | `POSTGRES_PORT` | `5433` | porta do host no docker-compose (alternativa Docker) |
 | `PORT` | `3000` | API |
 | `HOST` | `127.0.0.1` | interface de escuta da API (padrão `127.0.0.1`; no container de produção use `0.0.0.0`) |
-| `APP_ORIGIN` | `http://127.0.0.1:5310` | origem pública; usada no CSRF e para montar links de convite/reset |
-| `NODE_ENV` | `development` | `production` liga cookie `Secure`/`__Host-` e desliga Swagger UI |
-| `TRUST_PROXY` | `false` | `true` atrás do Caddy (IP real em `request.ip`) |
+| `APP_ORIGIN` | `http://127.0.0.1:5310` | origem pública; usada no CSRF e para montar links de convite/reset. `https://` só com `NODE_ENV=production`, e produção exige `https://` (a API não sobe com a combinação errada, §6.8) |
+| `NODE_ENV` | `development` | `production` liga cookie `Secure`/`__Host-` e desliga Swagger UI. **O Dockerfile de produção (Fatia 10) deve fixar `ENV NODE_ENV=production`** |
+| `TRUST_PROXY` | `false` | atrás do Caddy, IP real em `request.ip`. **Fatia 10: restringir à sub-rede/IP do proxy** (não `true`), senão quem alcança a API forja `X-Forwarded-For` e escapa do bloqueio por IP e dos limites de rota (§6.8) |
 | `LOG_LEVEL` | `info` | |
 
 ## 4. Modelo de domínio
@@ -664,11 +665,15 @@ Somado a `SameSite=Lax` e à ausência de CORS, isso bloqueia formulários e fet
 ### 6.4 Limites de tentativa
 | Alvo | Regra | Resposta |
 |------|-------|----------|
-| Login por e-mail | 5 falhas em 15 min → bloqueio de 15 min (persistido em `auth_throttle`); sucesso zera. Janela vencida ou bloqueio terminado recomeçam a contagem | `429 TOO_MANY_ATTEMPTS` + `Retry-After` |
-| Login por IP | 20 falhas em 15 min → bloqueio de 15 min | idem |
+| Login por e-mail | 5 falhas em 15 min → bloqueio de 15 min (persistido em `auth_throttle`); sucesso zera. Janela vencida ou bloqueio terminado recomeçam a contagem. `currentPassword` errada na troca de senha conta na mesma chave | `429 TOO_MANY_ATTEMPTS` + `Retry-After` |
+| Login por IP | 20 falhas em 15 min → bloqueio de 15 min; sucesso não conta nem zera | idem |
+| `POST /api/auth/login` | 30 req / min por IP (`@fastify/rate-limit`) | `429 RATE_LIMITED` |
+| `POST /api/me/password` | 10 req / 15 min por usuário | `429 RATE_LIMITED` |
 | Lookup/aceite de convite e reset | 10 req / 15 min por IP (`@fastify/rate-limit`) | `429 RATE_LIMITED` |
 | Setup | 5 req / 15 min por IP | `429 RATE_LIMITED` |
 | Geral autenticado | 600 req / min por usuário | `429 RATE_LIMITED` |
+
+Atomicidade (`api.md` §18.5, itens 41 e 42): a tentativa é **reservada antes do Argon2** com um upsert que incrementa e devolve o contador (`INSERT ... ON CONFLICT DO UPDATE ... RETURNING`), e a decisão usa o valor devolvido. Proibido o padrão "checa bloqueio → verifica senha → grava falha": uma rajada paralela inteira passa pela checagem antes da primeira falha ser gravada. Ordem: e-mail, depois IP. Sucesso apaga o e-mail e devolve a reserva do IP; senha certa na troca de senha devolve a reserva do e-mail.
 
 Nota: o escopo cita "5 tentativas para o mesmo e-mail ou IP". Para IP usamos 20 porque a equipe tende a compartilhar o mesmo IP (escritório/NAT); 5 por IP bloquearia todos por um erro de um. O bloqueio por e-mail mantém 5.
 
@@ -677,6 +682,7 @@ Nota: o escopo cita "5 tentativas para o mesmo e-mail ou IP". Para IP usamos 20 
 - URLs com token no **fragmento** (não vai para logs de servidor/proxy nem `Referer`): `${APP_ORIGIN}/convite#token=<t>` e `${APP_ORIGIN}/redefinir-senha#token=<t>`. A SPA lê o fragmento, limpa com `history.replaceState` e envia o token no corpo JSON.
 - Uso único: consumo com `UPDATE auth_tokens SET used_at=now() WHERE token_hash=$1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > now() RETURNING *` na mesma transação da criação da conta/troca de senha.
 - Gerar novo reset para um usuário revoga os resets pendentes dele.
+- Rebaixar um Admin para Member, desativar ou anonimizar revoga, na mesma transação, os convites e resets **pendentes criados por ele** (`created_by`): um Admin removido não deixa links válidos para trás (`api.md` §18.5 item 43).
 
 ### 6.6 Autorização
 - Todos os usuários ativos leem e editam todos os quadros (decisão 1 do cliente).
@@ -690,7 +696,13 @@ Nota: o escopo cita "5 tentativas para o mesmo e-mail ou IP". Para IP usamos 20 
 - Caddy (produção): `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`, `Strict-Transport-Security`, `Referrer-Policy: same-origin`, `X-Content-Type-Options: nosniff`, `Permissions-Policy` restritiva.
 - XSS: Markdown renderizado com `react-markdown` sem HTML cru; links com `target="_blank" rel="noopener noreferrer"`; `urlTransform` padrão (bloqueia `javascript:`) (ADR 0007). Nunca usar `dangerouslySetInnerHTML`.
 - SQL injection: só query builder do Drizzle ou `sql` template com parâmetros; proibido concatenar string em SQL.
+- Erros de banco nos logs: o serializer de `err` (`logger.ts`) loga `DrizzleQueryError`/`DatabaseError` só com tipo, query sem `params`, SQLSTATE, constraint e frames do stack; nunca `message`/`detail`, que carregam valores (e-mail, hash) (`api.md` §18.5 item 45).
 - Logs (pino): `redact` de `req.headers.cookie`, `res.headers["set-cookie"]`, `*.password`, `*.currentPassword`, `*.newPassword`, `*.token`. Não logar corpo de requisição. Logar `reqId`, rota, status, duração, `userId`.
+
+### 6.8 Configuração fail-closed e requisitos do deploy (Fatia 10)
+- `config/env.ts` recusa subir com `NODE_ENV=production` e `APP_ORIGIN` em `http://`, ou com `APP_ORIGIN` em `https://` fora de produção. O `NODE_ENV` controla cookie `Secure`/`__Host-`, `/api/docs` e os parâmetros do Argon2: esquecer a variável em produção precisa falhar na inicialização, não degradar em silêncio.
+- O **Dockerfile de produção deve definir `ENV NODE_ENV=production`** (não depender só do compose ou do `.env` do servidor).
+- **`TRUST_PROXY` deve ser restrito à sub-rede/IP do Caddy.** Hoje a variável é booleana; a Fatia 10 passa a aceitar lista de IPs/CIDR e repassa ao `trustProxy` do Fastify. Com `true`, qualquer cliente que alcance a porta da API forja `X-Forwarded-For` e anula o bloqueio por IP e os limites de rota. A API também só deve escutar na rede interna do compose.
 
 ## 7. Atualização entre usuários (ADR 0006)
 

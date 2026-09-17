@@ -234,11 +234,15 @@ describeDb('plugins/session (kanban_test)', () => {
   });
 
   it('NODE_ENV=production: cookie __Host-kanban_sid com Secure, HttpOnly, SameSite=Lax, Path=/', async () => {
-    app = await createDbTestApp({ clock: clock.now, envOverrides: { NODE_ENV: 'production' } });
+    const origin = 'https://kanban.example';
+    app = await createDbTestApp({
+      clock: clock.now,
+      envOverrides: { NODE_ENV: 'production', APP_ORIGIN: origin },
+    });
     const res = await app.inject({
       method: 'POST',
       url: '/api/setup',
-      headers: jsonMutationHeaders(),
+      headers: { 'content-type': 'application/json', ...csrfHeaders({ APP_ORIGIN: origin }) },
       payload: {
         workspaceName: 'Ronin',
         name: 'Ana',

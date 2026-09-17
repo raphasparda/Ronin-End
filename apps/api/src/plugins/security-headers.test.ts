@@ -64,7 +64,9 @@ describe('plugins/security-headers', () => {
   });
 
   it('em produção os headers também valem', async () => {
-    const prod = await createTestApp({ env: testEnv({ NODE_ENV: 'production' }) });
+    const prod = await createTestApp({
+      env: testEnv({ NODE_ENV: 'production', APP_ORIGIN: 'https://kanban.example' }),
+    });
     try {
       const res = await prod.inject({ method: 'GET', url: '/api/health' });
       expect(res.headers['content-security-policy']).toBe(STRICT_CSP);

@@ -1,9 +1,11 @@
+import { setTimeout as sleep } from 'node:timers/promises';
+
 import type { LightMyRequestResponse } from 'fastify';
 
 import { buildApp, type App, type BuildAppOptions } from '../src/app';
 import type { Database } from '../src/db/client';
 import { users, workspace, type UserRow } from '../src/db/schema';
-import { argon2ParamsFor, createPasswordHasher } from '../src/lib/password';
+import { argon2ParamsFor, createPasswordHasher, type PasswordHasher } from '../src/lib/password';
 import { createSession } from '../src/modules/sessions/service';
 
 import { csrfHeaders, testEnv } from './app';
@@ -93,4 +95,27 @@ export function cookieHeaderOf(res: LightMyRequestResponse, cookieName = 'kanban
 
 export function jsonMutationHeaders(extra: Record<string, string> = {}): Record<string, string> {
   return { 'content-type': 'application/json', ...csrfHeaders(), ...extra };
+}
+
+/**
+ * Hasher de teste que conta as verificações (reais ou fictícias) e segura cada uma por alguns ms,
+ * alargando a janela de corrida entre a reserva da tentativa e a resposta (api.md §18.5).
+ */
+export function countingPasswords(delayMs = 30): { hasher: PasswordHasher; count: () => number } {
+  let verifications = 0;
+  const hasher: PasswordHasher = {
+    params: testPasswords.params,
+    hash: (password) => testPasswords.hash(password),
+    async verify(passwordHash, password) {
+      verifications += 1;
+      await sleep(delayMs);
+      return testPasswords.verify(passwordHash, password);
+    },
+    async verifyDummy(password) {
+      verifications += 1;
+      await sleep(delayMs);
+      return testPasswords.verifyDummy(password);
+    },
+  };
+  return { hasher, count: () => verifications };
 }

@@ -291,6 +291,48 @@ describeDb('POST /api/admin/users/:userId/anonymize (kanban_test)', () => {
     expect(invite2.statusCode).toBe(201);
   });
 
+  it('revoga convites e redefinições pendentes que o anonimizado criou (api.md §18.5)', async () => {
+    const issuer = await seedActor(db(), { role: 'admin' }, clock.now());
+    const expiresAt = new Date(clock.now().getTime() + 60_000);
+    // Tokens emitidos enquanto era Admin; a desativação é feita direto no banco (dado legado,
+    // anterior à revogação na desativação), para exercitar o caminho da anonimização.
+    const [invite, reset, foreign] = await db()
+      .insert(authTokens)
+      .values([
+        {
+          kind: 'invite',
+          role: 'admin',
+          tokenHash: sha256Hex(randomUUID()),
+          createdBy: issuer.user.id,
+          expiresAt,
+        },
+        {
+          kind: 'password_reset',
+          tokenHash: sha256Hex(randomUUID()),
+          targetUserId: member.user.id,
+          createdBy: issuer.user.id,
+          expiresAt,
+        },
+        {
+          kind: 'invite',
+          role: 'member',
+          tokenHash: sha256Hex(randomUUID()),
+          createdBy: admin.user.id,
+          expiresAt,
+        },
+      ])
+      .returning();
+    await db().update(users).set({ status: 'deactivated' }).where(eq(users.id, issuer.user.id));
+    clock.advance(1000);
+
+    expect((await anonymize(issuer.user.id)).statusCode).toBe(200);
+    const rows = await db().select().from(authTokens);
+    const revokedAt = (id: string | undefined) => rows.find((r) => r.id === id)?.revokedAt;
+    expect(revokedAt(invite?.id)).toEqual(clock.now());
+    expect(revokedAt(reset?.id)).toEqual(clock.now());
+    expect(revokedAt(foreign?.id)).toBeNull();
+  });
+
   it('409 USER_NOT_DEACTIVATED (ativo), 409 CANNOT_TARGET_SELF, 404, 403 Member (antes do 404), 400, CSRF, 401', async () => {
     expectError(await anonymize(member.user.id), 409, 'USER_NOT_DEACTIVATED');
     expectError(await anonymize(admin.user.id), 409, 'CANNOT_TARGET_SELF');

@@ -65,7 +65,9 @@ describe('OpenAPI', () => {
   });
 
   it('em produção /api/docs não existe (404 no envelope)', async () => {
-    app = await createTestApp({ env: testEnv({ NODE_ENV: 'production' }) });
+    app = await createTestApp({
+      env: testEnv({ NODE_ENV: 'production', APP_ORIGIN: 'https://kanban.example' }),
+    });
     for (const url of ['/api/docs', '/api/docs/json']) {
       const res = await app.inject({ method: 'GET', url });
       expect(res.statusCode).toBe(404);

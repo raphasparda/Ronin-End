@@ -125,6 +125,24 @@ export async function revokeUnusedPasswordResets(
 }
 
 /**
+ * Revoga os convites e links de redefinição ainda pendentes (não usados, não revogados, não
+ * expirados) criados por `createdBy` (api.md §18.5). Usado quando o criador perde o poder de
+ * emiti-los: desativação, rebaixamento de Admin e anonimização. Retorna quantos revogou.
+ */
+export async function revokePendingTokensCreatedBy(
+  db: DbExecutor,
+  createdBy: string,
+  now: Date,
+): Promise<number> {
+  const rows = await db
+    .update(authTokens)
+    .set({ revokedAt: now })
+    .where(and(eq(authTokens.createdBy, createdBy), pendingCondition(now)))
+    .returning({ id: authTokens.id });
+  return rows.length;
+}
+
+/**
  * Anonimização (LGPD, overview.md §5.2): apaga os links de redefinição cujo alvo é o usuário e tira
  * o e-mail dos convites ligados a ele (o que ele aceitou, ou algum com o e-mail dele). Convite ainda
  * pendente com esse e-mail é revogado junto (sem e-mail ele viraria um convite aberto).

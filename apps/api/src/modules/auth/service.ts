@@ -10,10 +10,11 @@ import { getWorkspace } from '../workspace/service';
 import {
   LOGIN_THROTTLE,
   emailThrottleKey,
-  findActiveLock,
   ipThrottleKey,
-  recordFailure,
+  releaseAttempt,
+  reserveAttempt,
   resetThrottle,
+  retryAfterSeconds,
 } from './throttle';
 
 export interface AuthDeps {
@@ -33,11 +34,23 @@ export interface LoginResult extends AuthSessionResponse {
   token: string;
 }
 
+/** 429 com `Retry-After` (login e troca de senha). */
+export function tooManyAttempts(lockedUntil: Date, now: Date): AppError {
+  return new AppError('TOO_MANY_ATTEMPTS', TOO_MANY_ATTEMPTS_MESSAGE, {
+    headers: { 'retry-after': String(retryAfterSeconds(lockedUntil, now)) },
+  });
+}
+
 /**
- * Login (api.md §5, overview.md §6.1 e §6.4).
- * Ordem: instância configurada → bloqueio ativo (e-mail ou IP) → verificação Argon2id (contra hash
- * fictício quando o usuário não existe ou não pode entrar) → falha registra nas duas chaves;
- * sucesso zera o e-mail, descarta a sessão anterior deste navegador e cria uma nova.
+ * Login (api.md §5, §18.5; overview.md §6.1 e §6.4).
+ * Ordem: instância configurada → reserva atômica de tentativa no e-mail e depois no IP (recusada →
+ * 429; se o IP recusar, a reserva do e-mail é devolvida) → verificação Argon2id (contra hash
+ * fictício quando o usuário não existe ou não pode entrar) → falha mantém as reservas e responde a
+ * mensagem genérica; sucesso zera o e-mail, devolve a reserva do IP, descarta a sessão anterior
+ * deste navegador e cria uma nova.
+ *
+ * Reservar antes do Argon2 (e não registrar a falha depois) fecha a corrida em que uma rajada
+ * paralela passava toda pela checagem de bloqueio antes de a primeira falha ser gravada.
  */
 export async function login(
   deps: AuthDeps,
@@ -53,12 +66,15 @@ export async function login(
   const emailKey = emailThrottleKey(input.email);
   const ipKey = ipThrottleKey(context.ip);
 
-  const lockedUntil = await findActiveLock(db, [emailKey, ipKey], now);
-  if (lockedUntil) {
-    const retryAfter = Math.max(1, Math.ceil((lockedUntil.getTime() - now.getTime()) / 1000));
-    throw new AppError('TOO_MANY_ATTEMPTS', TOO_MANY_ATTEMPTS_MESSAGE, {
-      headers: { 'retry-after': String(retryAfter) },
-    });
+  // E-mail primeiro: rajada contra um e-mail bloqueado não toca no contador do IP (que é
+  // compartilhado pelo escritório).
+  const emailAttempt = await reserveAttempt(db, emailKey, LOGIN_THROTTLE.emailMaxFailures, now);
+  if (!emailAttempt.allowed) throw tooManyAttempts(emailAttempt.lockedUntil, now);
+
+  const ipAttempt = await reserveAttempt(db, ipKey, LOGIN_THROTTLE.ipMaxFailures, now);
+  if (!ipAttempt.allowed) {
+    await releaseAttempt(db, emailKey, LOGIN_THROTTLE.emailMaxFailures);
+    throw tooManyAttempts(ipAttempt.lockedUntil, now);
   }
 
   const user = await findUserByEmail(db, input.email);
@@ -75,8 +91,7 @@ export async function login(
       : await passwords.verifyDummy(input.password);
 
   if (!canSignIn || !passwordOk || user.email === null) {
-    await recordFailure(db, emailKey, LOGIN_THROTTLE.emailMaxFailures, now);
-    await recordFailure(db, ipKey, LOGIN_THROTTLE.ipMaxFailures, now);
+    // As duas reservas ficam: contam como falha.
     throw new AppError('INVALID_CREDENTIALS', INVALID_CREDENTIALS_MESSAGE);
   }
 
@@ -84,6 +99,8 @@ export async function login(
 
   return db.transaction(async (tx) => {
     await resetThrottle(tx, emailKey);
+    // Sucesso não conta no IP (semântica anterior: o IP só soma falhas).
+    await releaseAttempt(tx, ipKey, LOGIN_THROTTLE.ipMaxFailures);
     if (context.currentSessionId) await deleteSession(tx, context.currentSessionId);
     const { token } = await createSession(tx, user.id, now);
     return { token, user: sessionUser, workspace: await getWorkspace(tx) };

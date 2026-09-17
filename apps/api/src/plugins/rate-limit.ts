@@ -41,3 +41,22 @@ export const TOKEN_ROUTE_RATE_LIMIT = { max: 10, timeWindowMs: 15 * 60_000 } as 
 
 export const tokenRouteRateLimit = (): RateLimitOptions =>
   perIpRateLimit(TOKEN_ROUTE_RATE_LIMIT.max, TOKEN_ROUTE_RATE_LIMIT.timeWindowMs);
+
+/**
+ * `POST /api/auth/login`: 30 req / min por IP (api.md §18.5). Barreira extra, em memória, na frente
+ * do bloqueio persistido por e-mail/IP: limita o custo de rajadas (cada tentativa ainda consulta o
+ * banco) sem atrapalhar um escritório atrás do mesmo IP.
+ */
+export const LOGIN_ROUTE_RATE_LIMIT = { max: 30, timeWindowMs: 60_000 } as const;
+
+export const loginRouteRateLimit = (): RateLimitOptions =>
+  perIpRateLimit(LOGIN_ROUTE_RATE_LIMIT.max, LOGIN_ROUTE_RATE_LIMIT.timeWindowMs);
+
+/** `POST /api/me/password`: 10 req / 15 min por usuário (por IP sem sessão) (api.md §18.5). */
+export const CHANGE_PASSWORD_RATE_LIMIT = { max: 10, timeWindowMs: 15 * 60_000 } as const;
+
+export const changePasswordRateLimit = (): RateLimitOptions => ({
+  max: CHANGE_PASSWORD_RATE_LIMIT.max,
+  timeWindow: CHANGE_PASSWORD_RATE_LIMIT.timeWindowMs,
+  keyGenerator: (request) => (request.user ? `user:${request.user.id}` : ipKey(request)),
+});
