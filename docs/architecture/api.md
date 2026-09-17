@@ -414,7 +414,7 @@ Adiciona à lista de acesso. Card `team` → `409 CARD_NOT_RESTRICTED`. Usuário
 200 `{ viewerIds: Uuid[] }` (ordem de inclusão).
 
 ### `DELETE /api/cards/:cardId/viewers/:userId` · Auth
-Remove da lista de acesso (qualquer status de usuário), inclusive a si mesmo — quem se remove perde o acesso ao card na hora (a UI confirma antes). Card `team` → `409 CARD_NOT_RESTRICTED`. Se existia: atividade `card_viewer_removed`. Idempotente. Não existe regra de "último viewer": Admin sempre alcança o card.
+Remove da lista de acesso (qualquer status de usuário), inclusive a si mesmo — quem se remove perde o acesso ao card na hora (a UI confirma antes). Card `team` → `409 CARD_NOT_RESTRICTED`. **Responsável do card → `409 CONFLICT`** ("{Nome} é responsável por este card. Remova a pessoa dos responsáveis antes de tirar o acesso."): é o que mantém a invariante RN32 (responsável ⊆ lista de acesso) e "Meus cards" sem card bloqueado. Se existia: atividade `card_viewer_removed`. Idempotente. Não existe regra de "último viewer": Admin sempre alcança o card.
 200 `{ viewerIds: Uuid[] }`.
 
 ### `POST /api/cards/:cardId/cover/upload-url` · Auth · rate limit 30/5min/usuário

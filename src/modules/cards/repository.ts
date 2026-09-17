@@ -444,6 +444,11 @@ export async function deleteCardViewer(
   return rows.length > 0;
 }
 
+/** Anonimização (RN38): tira a pessoa de todas as listas de acesso. */
+export async function deleteCardViewersOfUser(db: DbExecutor, userId: string): Promise<void> {
+  await db.delete(cardViewers).where(eq(cardViewers.userId, userId));
+}
+
 /** Apaga a lista de acesso inteira (voltar o card para `team`). */
 export async function deleteCardViewers(db: DbExecutor, cardId: string): Promise<void> {
   await db.delete(cardViewers).where(eq(cardViewers.cardId, cardId));

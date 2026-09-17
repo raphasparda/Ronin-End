@@ -9,6 +9,7 @@ import {
   type CardDetail,
   type CardMutationResult,
   type CardSummary,
+  type CardVisibility,
   type Checklist,
   type CompletionChange,
   type Comment,
@@ -47,7 +48,10 @@ import {
   findCardLabelPairs,
   findCardSummaryRows,
   findCardViewerIds,
+  deleteCardViewer,
+  deleteCardViewers,
   insertCardAssignee,
+  insertCardViewer,
   insertCardRow,
   lockCardById,
   updateCardById,
@@ -66,6 +70,15 @@ export const CARD_ARCHIVED_COMPLETION_MESSAGE =
   'Este card está arquivado. Restaure-o antes de concluir ou reabrir.';
 export const USER_NOT_ACTIVE_ASSIGN_MESSAGE =
   'Esta pessoa está desativada e não pode ser atribuída ao card.';
+export const USER_NOT_ACTIVE_VIEWER_MESSAGE =
+  'Esta pessoa está desativada e não pode receber acesso ao card.';
+export const CARD_NOT_RESTRICTED_MESSAGE =
+  'Este card é visível para a equipe. Restrinja o card antes de mexer na lista de acesso.';
+
+/** RN32: responsável de card restrito não perde o acesso (tire a atribuição antes). */
+export function viewerIsAssigneeMessage(name: string): string {
+  return `${name} é responsável por este card. Remova a pessoa dos responsáveis antes de tirar o acesso.`;
+}
 
 /** Contexto de quem executa a ação (o papel entra na checagem de acesso, ADR 0015). */
 export interface CardActionContext {
@@ -854,14 +867,21 @@ export async function assignCard(
       now: ctx.now,
     });
     if (inserted) {
-      await recordActivity(tx, {
-        cardId: card.id,
-        boardId: card.boardId,
-        actorId: ctx.actor.id,
-        now: ctx.now,
-        type: 'card_assignee_added',
-        data: { userId },
-      });
+      const base = { cardId: card.id, boardId: card.boardId, actorId: ctx.actor.id, now: ctx.now };
+      await recordActivity(tx, { ...base, type: 'card_assignee_added', data: { userId } });
+      // RN31/RN32: em card restrito, quem vira responsável entra na lista de acesso na mesma
+      // transação — ninguém fica responsável por um card que não consegue abrir.
+      if (card.visibility === 'restricted') {
+        const addedViewer = await insertCardViewer(tx, {
+          cardId: card.id,
+          userId,
+          addedBy: ctx.actor.id,
+          now: ctx.now,
+        });
+        if (addedViewer) {
+          await recordActivity(tx, { ...base, type: 'card_viewer_added', data: { userId } });
+        }
+      }
       await onAssigned(tx, { cardId: card.id, userId, actorId: ctx.actor.id, now: ctx.now });
     }
     return findCardAssigneeIds(tx, card.id);
@@ -894,5 +914,144 @@ export async function unassignCard(
       });
     }
     return findCardAssigneeIds(tx, card.id);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Visibilidade e lista de acesso (Fatia 11, ADR 0015)
+// ---------------------------------------------------------------------------
+
+/**
+ * `PUT /api/cards/:cardId/visibility { visibility }` (api.md §11). Idempotente.
+ * - `restricted`: o **ator** e os **responsáveis atuais** entram na lista de acesso na mesma
+ *   transação (cada inclusão nova gera `card_viewer_added`);
+ * - `team`: a lista é apagada (`viewerIds` volta a `[]`, sem atividade por pessoa).
+ * Ordem: 400 → 404 → `403 CARD_RESTRICTED` → `409 BOARD_ARCHIVED`. Card arquivado é aceito.
+ */
+export async function setCardVisibility(
+  db: Database,
+  ctx: CardActionContext,
+  cardId: string,
+  visibility: CardVisibility,
+): Promise<CardDetail> {
+  return cardTransaction(db, async (tx) => {
+    const { card, boards } = await lockCard(tx, cardId, { actor: ctx.actor, lockLists: false });
+    assertBoardWritable(boards.get(card.boardId));
+    if (card.visibility === visibility) return loadCardDetail(tx, card.id, ctx.actor);
+
+    const base = { cardId: card.id, boardId: card.boardId, actorId: ctx.actor.id, now: ctx.now };
+    await updateCardById(tx, card.id, { visibility, updatedAt: ctx.now });
+    await recordActivity(tx, {
+      ...base,
+      type: 'card_visibility_changed',
+      data: { from: card.visibility, to: visibility },
+    });
+
+    if (visibility === 'restricted') {
+      const assignees = await findCardAssigneeIds(tx, card.id);
+      for (const userId of [ctx.actor.id, ...assignees]) {
+        const added = await insertCardViewer(tx, {
+          cardId: card.id,
+          userId,
+          addedBy: ctx.actor.id,
+          now: ctx.now,
+        });
+        if (added) {
+          await recordActivity(tx, { ...base, type: 'card_viewer_added', data: { userId } });
+        }
+      }
+    } else {
+      await deleteCardViewers(tx, card.id);
+    }
+    return loadCardDetail(tx, card.id, ctx.actor);
+  });
+}
+
+/** Card `team` não tem lista de acesso para mexer (api.md §11). */
+function cardNotRestricted(): AppError {
+  return new AppError('CARD_NOT_RESTRICTED', CARD_NOT_RESTRICTED_MESSAGE);
+}
+
+/**
+ * `PUT /api/cards/:cardId/viewers/:userId` (api.md §11). Idempotente.
+ * Ordem: 404 (card, usuário) → `403 CARD_RESTRICTED` → `409 BOARD_ARCHIVED` →
+ * `409 CARD_NOT_RESTRICTED` → `409 USER_NOT_ACTIVE` (RN37). Card arquivado é aceito.
+ */
+export async function addCardViewer(
+  db: Database,
+  ctx: CardActionContext,
+  cardId: string,
+  userId: string,
+): Promise<string[]> {
+  return cardTransaction(db, async (tx) => {
+    const { card, boards } = await lockCard(tx, cardId, { actor: ctx.actor, lockLists: false });
+    if (!(await findUserById(tx, userId))) throw new AppError('NOT_FOUND', USER_NOT_FOUND_MESSAGE);
+    assertBoardWritable(boards.get(card.boardId));
+    if (card.visibility !== 'restricted') throw cardNotRestricted();
+
+    const current = await findCardViewerIds(tx, card.id);
+    if (current.includes(userId)) return current;
+
+    // `FOR SHARE` no usuário: desativar em paralelo espera ou é visto (mesma regra da atribuição).
+    const user = await lockUserShared(tx, userId);
+    if (!user) throw new AppError('NOT_FOUND', USER_NOT_FOUND_MESSAGE);
+    if (user.status !== 'active' || user.anonymizedAt !== null) {
+      throw new AppError('USER_NOT_ACTIVE', USER_NOT_ACTIVE_VIEWER_MESSAGE);
+    }
+
+    const added = await insertCardViewer(tx, {
+      cardId: card.id,
+      userId,
+      addedBy: ctx.actor.id,
+      now: ctx.now,
+    });
+    if (added) {
+      await recordActivity(tx, {
+        cardId: card.id,
+        boardId: card.boardId,
+        actorId: ctx.actor.id,
+        now: ctx.now,
+        type: 'card_viewer_added',
+        data: { userId },
+      });
+    }
+    return findCardViewerIds(tx, card.id);
+  });
+}
+
+/**
+ * `DELETE /api/cards/:cardId/viewers/:userId` (api.md §11): remove da lista de acesso, inclusive a
+ * si mesmo (quem se remove perde o acesso na hora). Idempotente; não há regra de "último viewer"
+ * (Admin sempre alcança o card). **RN32:** responsável do card não pode perder o acesso — primeiro
+ * se remove a atribuição (`409 CONFLICT`), senão "Meus cards" mostraria card bloqueado.
+ */
+export async function removeCardViewer(
+  db: Database,
+  ctx: CardActionContext,
+  cardId: string,
+  userId: string,
+): Promise<string[]> {
+  return cardTransaction(db, async (tx) => {
+    const { card, boards } = await lockCard(tx, cardId, { actor: ctx.actor, lockLists: false });
+    const user = await findUserById(tx, userId);
+    if (!user) throw new AppError('NOT_FOUND', USER_NOT_FOUND_MESSAGE);
+    assertBoardWritable(boards.get(card.boardId));
+    if (card.visibility !== 'restricted') throw cardNotRestricted();
+
+    if ((await findCardAssigneeIds(tx, card.id)).includes(userId)) {
+      throw new AppError('CONFLICT', viewerIsAssigneeMessage(user.name));
+    }
+
+    if (await deleteCardViewer(tx, card.id, userId)) {
+      await recordActivity(tx, {
+        cardId: card.id,
+        boardId: card.boardId,
+        actorId: ctx.actor.id,
+        now: ctx.now,
+        type: 'card_viewer_removed',
+        data: { userId },
+      });
+    }
+    return findCardViewerIds(tx, card.id);
   });
 }

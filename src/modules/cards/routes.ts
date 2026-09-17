@@ -6,10 +6,13 @@ import {
   cardIdParamsSchema,
   cardMutationResultSchema,
   cardSummaryResponseSchema,
+  cardViewerParamsSchema,
+  cardViewersResponseSchema,
   createCardRequestSchema,
   listIdParamsSchema,
   moveCardRequestSchema,
   updateCardRequestSchema,
+  updateCardVisibilityRequestSchema,
 } from '@raphasparda/ronin-shared';
 import type { FastifyRequest } from 'fastify';
 import type { FastifyPluginCallbackZod } from 'fastify-type-provider-zod';
@@ -19,6 +22,7 @@ import { errorResponses, noContentSchema } from '../../lib/route-schemas';
 import { requireUser } from '../../plugins/session';
 
 import {
+  addCardViewer,
   archiveCard,
   assignCard,
   changeCardCompletion,
@@ -27,7 +31,9 @@ import {
   getCardActivity,
   getCardDetail,
   moveCard,
+  removeCardViewer,
   restoreCard,
+  setCardVisibility,
   unassignCard,
   updateCard,
   type CardActionContext,
@@ -233,6 +239,69 @@ export const cardRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
     },
     async (request) => ({
       assigneeIds: await unassignCard(
+        app.db,
+        actionContext(app, request),
+        request.params.cardId,
+        request.params.userId,
+      ),
+    }),
+  );
+
+  app.put(
+    '/api/cards/:cardId/visibility',
+    {
+      schema: {
+        tags: ['cards'],
+        summary:
+          'Muda a visibilidade do card (equipe/restrito); restringir inclui ator e responsáveis',
+        params: cardIdParamsSchema,
+        body: updateCardVisibilityRequestSchema,
+        response: { 200: cardDetailResponseSchema, ...errorResponses(400, 401, 403, 404, 409) },
+      },
+    },
+    async (request) => ({
+      card: await setCardVisibility(
+        app.db,
+        actionContext(app, request),
+        request.params.cardId,
+        request.body.visibility,
+      ),
+    }),
+  );
+
+  app.put(
+    '/api/cards/:cardId/viewers/:userId',
+    {
+      schema: {
+        tags: ['cards'],
+        summary:
+          'Dá acesso ao card restrito (idempotente; card da equipe → 409 CARD_NOT_RESTRICTED)',
+        params: cardViewerParamsSchema,
+        response: { 200: cardViewersResponseSchema, ...errorResponses(400, 401, 403, 404, 409) },
+      },
+    },
+    async (request) => ({
+      viewerIds: await addCardViewer(
+        app.db,
+        actionContext(app, request),
+        request.params.cardId,
+        request.params.userId,
+      ),
+    }),
+  );
+
+  app.delete(
+    '/api/cards/:cardId/viewers/:userId',
+    {
+      schema: {
+        tags: ['cards'],
+        summary: 'Tira o acesso ao card restrito (idempotente; responsável do card → 409)',
+        params: cardViewerParamsSchema,
+        response: { 200: cardViewersResponseSchema, ...errorResponses(400, 401, 403, 404, 409) },
+      },
+    },
+    async (request) => ({
+      viewerIds: await removeCardViewer(
         app.db,
         actionContext(app, request),
         request.params.cardId,
