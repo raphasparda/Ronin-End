@@ -117,6 +117,22 @@ describe('setupRequestSchema', () => {
     expect(issuePaths(result).sort()).toEqual(['email', 'name', 'password', 'workspaceName']);
   });
 
+  it('setupToken: opcional, até 200 caracteres, sem trim', () => {
+    expect(setupRequestSchema.parse(validSetup).setupToken).toBeUndefined();
+    expect(setupRequestSchema.parse({ ...validSetup, setupToken: ' abc ' }).setupToken).toBe(
+      ' abc ',
+    );
+    expect(
+      setupRequestSchema.safeParse({ ...validSetup, setupToken: 'a'.repeat(200) }).success,
+    ).toBe(true);
+    expect(
+      issuePaths(setupRequestSchema.safeParse({ ...validSetup, setupToken: 'a'.repeat(201) })),
+    ).toEqual(['setupToken']);
+    expect(issuePaths(setupRequestSchema.safeParse({ ...validSetup, setupToken: 123 }))).toEqual([
+      'setupToken',
+    ]);
+  });
+
   it('rejeita e-mail inválido e acima de 254 caracteres', () => {
     expect(issuePaths(setupRequestSchema.safeParse({ ...validSetup, email: 'ana@' }))).toEqual([
       'email',
@@ -186,8 +202,12 @@ describe('respostas', () => {
   });
 
   it('setupStatusResponseSchema', () => {
-    expect(setupStatusResponseSchema.parse({ needsSetup: true })).toEqual({ needsSetup: true });
-    expect(setupStatusResponseSchema.safeParse({ needsSetup: 'true' }).success).toBe(false);
+    const status = { needsSetup: true, requiresSetupToken: false };
+    expect(setupStatusResponseSchema.parse(status)).toEqual(status);
+    expect(setupStatusResponseSchema.safeParse({ ...status, needsSetup: 'true' }).success).toBe(
+      false,
+    );
+    expect(setupStatusResponseSchema.safeParse({ needsSetup: true }).success).toBe(false);
   });
 
   it('healthResponseSchema', () => {

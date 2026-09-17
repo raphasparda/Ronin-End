@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { ERROR_CODES, ERROR_HTTP_STATUS, errorResponseSchema, isErrorCode } from './errors';
 
 describe('ErrorCode', () => {
-  it('tem os 30 códigos de api.md §3, sem duplicatas, todos com status', () => {
-    expect(ERROR_CODES).toHaveLength(30);
+  it('tem os 31 códigos de api.md §3, sem duplicatas, todos com status', () => {
+    expect(ERROR_CODES).toHaveLength(31);
     expect(new Set(ERROR_CODES).size).toBe(ERROR_CODES.length);
     expect(Object.keys(ERROR_HTTP_STATUS).sort()).toEqual([...ERROR_CODES].sort());
   });
@@ -13,6 +13,7 @@ describe('ErrorCode', () => {
     expect(ERROR_HTTP_STATUS.VALIDATION_ERROR).toBe(400);
     expect(ERROR_HTTP_STATUS.UNAUTHENTICATED).toBe(401);
     expect(ERROR_HTTP_STATUS.CSRF_REJECTED).toBe(403);
+    expect(ERROR_HTTP_STATUS.SETUP_TOKEN_INVALID).toBe(403);
     expect(ERROR_HTTP_STATUS.SETUP_REQUIRED).toBe(404);
     expect(ERROR_HTTP_STATUS.INVALID_PLACEMENT).toBe(409);
     expect(ERROR_HTTP_STATUS.TOKEN_INVALID).toBe(410);

@@ -137,7 +137,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   await registerRateLimit(app);
 
   await app.register(healthRoutes, { checkDatabase });
-  await app.register(setupRoutes);
+  await app.register(setupRoutes, { setupToken: env.SETUP_TOKEN });
   await app.register(authRoutes);
   await app.register(inviteRoutes);
   await app.register(passwordResetRoutes);

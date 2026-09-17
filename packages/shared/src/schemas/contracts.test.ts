@@ -30,7 +30,7 @@ const myCard = { ...cardSummary, boardName: 'Marketing', listName: 'A fazer', li
 const responseSamples: Record<string, unknown> = {
   healthResponseSchema: { status: 'ok', db: 'ok' },
   errorResponseSchema: { error: { code: 'NOT_FOUND', message: 'Não encontrado.' } },
-  setupStatusResponseSchema: { needsSetup: false },
+  setupStatusResponseSchema: { needsSetup: false, requiresSetupToken: true },
   authSessionResponseSchema: session,
   inviteLookupResponseSchema: { email: 'bia@exemplo.com', role: 'member', expiresAt: T0 },
   passwordResetLookupResponseSchema: { userName: 'Bia', expiresAt: T0 },

@@ -5,6 +5,7 @@
 > v1.3: CSP restrita na API e `no-store` em toda resposta (§6.7); `text/plain` recusado com `415 UNSUPPORTED_MEDIA_TYPE` (§6.3).
 > v1.4: §5 implementado para as fatias 2–9 (migrations `0001`–`0007`): FK composta de I6, `CHECK`s extras, trigger append-only da atividade e índices de FK para cascatas (§5.1.1).
 > v1.5: revisão de segurança: reserva atômica de tentativa no login e na troca de senha e limites de rota (§6.4), revogação dos tokens de quem perde o papel (§6.5), logs de erro de banco sem valores (§6.7), configuração fail-closed `NODE_ENV` × `APP_ORIGIN` e requisitos do deploy (§3, §6.8). Detalhes em `api.md` §18.5.
+> v1.6: setup inicial protegido por `SETUP_TOKEN`, obrigatório em produção (§3, §6.8).
 > Fonte de requisitos: `docs/product/scope.md` (inclui "Decisões confirmadas pelo cliente").
 > Documentos irmãos: `api.md` (contrato REST), `plan.md` (plano de implementação), `adr/` (decisões).
 
@@ -199,6 +200,7 @@ Variáveis de ambiente (`.env.example`):
 | `APP_ORIGIN` | `http://127.0.0.1:5310` | origem pública; usada no CSRF e para montar links de convite/reset. `https://` só com `NODE_ENV=production`, e produção exige `https://` (a API não sobe com a combinação errada, §6.8) |
 | `NODE_ENV` | `development` | `production` liga cookie `Secure`/`__Host-` e desliga Swagger UI. **O Dockerfile de produção (Fatia 10) deve fixar `ENV NODE_ENV=production`** |
 | `TRUST_PROXY` | `false` | atrás do Caddy, IP real em `request.ip`. **Fatia 10: restringir à sub-rede/IP do proxy** (não `true`), senão quem alcança a API forja `X-Forwarded-For` e escapa do bloqueio por IP e dos limites de rota (§6.8) |
+| `SETUP_TOKEN` | (vazio) | código exigido no `POST /api/setup` (16 a 200 caracteres). Opcional em dev; **obrigatório com `NODE_ENV=production`** (a API não sobe sem ele, §6.8). Gere com `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"` |
 | `LOG_LEVEL` | `info` | |
 
 ## 4. Modelo de domínio
@@ -672,7 +674,7 @@ Somado a `SameSite=Lax` e à ausência de CORS, isso bloqueia formulários e fet
 | `POST /api/auth/login` | 30 req / min por IP (`@fastify/rate-limit`) | `429 RATE_LIMITED` |
 | `POST /api/me/password` | 10 req / 15 min por usuário | `429 RATE_LIMITED` |
 | Lookup/aceite de convite e reset | 10 req / 15 min por IP (`@fastify/rate-limit`) | `429 RATE_LIMITED` |
-| Setup | 5 req / 15 min por IP | `429 RATE_LIMITED` |
+| Setup | 5 req / 15 min por IP (tentativas com código de configuração errado contam) | `429 RATE_LIMITED` |
 | Geral autenticado | 600 req / min por usuário | `429 RATE_LIMITED` |
 
 Atomicidade (`api.md` §18.5, itens 41 e 42): a tentativa é **reservada antes do Argon2** com um upsert que incrementa e devolve o contador (`INSERT ... ON CONFLICT DO UPDATE ... RETURNING`), e a decisão usa o valor devolvido. Proibido o padrão "checa bloqueio → verifica senha → grava falha": uma rajada paralela inteira passa pela checagem antes da primeira falha ser gravada. Ordem: e-mail, depois IP. Sucesso apaga o e-mail e devolve a reserva do IP; senha certa na troca de senha devolve a reserva do e-mail.
@@ -703,6 +705,7 @@ Nota: o escopo cita "5 tentativas para o mesmo e-mail ou IP". Para IP usamos 20 
 
 ### 6.8 Configuração fail-closed e requisitos do deploy (Fatia 10)
 - `config/env.ts` recusa subir com `NODE_ENV=production` e `APP_ORIGIN` em `http://`, ou com `APP_ORIGIN` em `https://` fora de produção. O `NODE_ENV` controla cookie `Secure`/`__Host-`, `/api/docs` e os parâmetros do Argon2: esquecer a variável em produção precisa falhar na inicialização, não degradar em silêncio.
+- **Setup inicial protegido por código:** com `NODE_ENV=production`, `SETUP_TOKEN` é obrigatório (erro em `SETUP_TOKEN` na inicialização). `POST /api/setup` sem o código certo responde `403 SETUP_TOKEN_INVALID` antes de consultar o banco ou gerar hash (comparação SHA-256 + `timingSafeEqual`), e `GET /api/setup/status` informa `requiresSetupToken` para a tela pedir o código (`api.md` §4 e §18.6). Sem isso, quem abrisse a instância vazia primeiro viraria Admin.
 - O **Dockerfile de produção deve definir `ENV NODE_ENV=production`** (não depender só do compose ou do `.env` do servidor).
 - **`TRUST_PROXY` deve ser restrito à sub-rede/IP do Caddy.** Hoje a variável é booleana; a Fatia 10 passa a aceitar lista de IPs/CIDR e repassa ao `trustProxy` do Fastify. Com `true`, qualquer cliente que alcance a porta da API forja `X-Forwarded-For` e anula o bloqueio por IP e os limites de rota. A API também só deve escutar na rede interna do compose.
 
@@ -746,7 +749,7 @@ Envelope único (schema `errorResponseSchema` no shared):
 ## 9. Frontend (diretrizes)
 
 - Rotas: `/setup`, `/login`, `/convite`, `/redefinir-senha`, `/` (quadros), `/quadros/arquivados`, `/b/:boardId`, `/b/:boardId/c/:cardId` (detalhe como diálogo sobre o quadro; URL compartilhável), `/meus-cards`, `/perfil`, `/admin/membros`, `/admin/convites`, `/admin/workspace`.
-- Boot: `GET /api/setup/status`; se `needsSetup` → `/setup`. Senão `GET /api/auth/me`; 401 → `/login`.
+- Boot: `GET /api/setup/status`; se `needsSetup` → `/setup` (com `requiresSetupToken`, o formulário pede o código de configuração e trata `403 SETUP_TOKEN_INVALID` no campo). Senão `GET /api/auth/me`; 401 → `/login`.
 - Tokens: `globals.css` define variáveis semânticas (`--color-bg`, `--color-surface`, `--color-text`, `--color-muted`, `--color-accent`, `--color-danger`, `--color-warning`, `--color-success`, `--color-border`) e, para cada chave da paleta (`gray`, `red`, `orange`, `yellow`, `green`, `cyan`, `blue`, `purple`, `magenta`), o trio `--palette-<cor>-bg`, `--palette-<cor>-fg` e `--palette-<cor>-border`, e, para cada prioridade, `--priority-<nivel>-bg|fg` (cores fixas), em `:root[data-theme="light"]` (**padrão**, S5) e `:root[data-theme="dark"]`, expostas ao Tailwind por `@theme inline`. Visual colorido estilo Monday (decisão do cliente): listas e etiquetas usam a paleta; raio, sombra, tipografia e valores finais vêm do design system (`docs/design/design-system.md` no ronin-web). Contraste AA obrigatório em todas as combinações `fg` sobre `bg`.
 - Cor da lista: cabeçalho/faixa da coluna usa `--palette-<color>-*`. Seletor de cor no menu da lista (amostras com nome acessível, ex. "Azul"). A face do card mostra a marca de cor da lista atual; Meus cards mostra o nome da lista com a cor.
 - Prioridade: selo na face do card com cor **e** texto ("Urgente", "Alta", "Média", "Baixa"); nada quando `null`. Seletor no detalhe. A cor nunca é a única pista de informação (RN17).

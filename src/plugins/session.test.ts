@@ -237,7 +237,11 @@ describeDb('plugins/session (kanban_test)', () => {
     const origin = 'https://kanban.example';
     app = await createDbTestApp({
       clock: clock.now,
-      envOverrides: { NODE_ENV: 'production', APP_ORIGIN: origin },
+      envOverrides: {
+        NODE_ENV: 'production',
+        APP_ORIGIN: origin,
+        SETUP_TOKEN: 'codigo-de-setup-de-teste',
+      },
     });
     const res = await app.inject({
       method: 'POST',
@@ -248,6 +252,7 @@ describeDb('plugins/session (kanban_test)', () => {
         name: 'Ana',
         email: 'ana@exemplo.com',
         password: 'senha-muito-segura',
+        setupToken: 'codigo-de-setup-de-teste',
       },
     });
     expect(res.statusCode).toBe(201);
@@ -287,6 +292,7 @@ describeDb('plugins/session (kanban_test)', () => {
         name: 'Ana',
         email: 'ana@exemplo.com',
         password: 'senha-muito-segura',
+        setupToken: 'codigo-de-setup-de-teste',
       },
     });
     expect(res.statusCode).toBe(201);

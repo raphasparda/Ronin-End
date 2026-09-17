@@ -42,12 +42,19 @@ describe('logger', () => {
     log.info({
       req: { headers: { cookie: 'kanban_sid=abc', authorization: 'Bearer x', host: 'h' } },
       res: { headers: { 'set-cookie': 'kanban_sid=abc' } },
-      body: { password: 'p1', currentPassword: 'p2', newPassword: 'p3', token: 't', name: 'Ana' },
+      body: {
+        password: 'p1',
+        currentPassword: 'p2',
+        newPassword: 'p3',
+        token: 't',
+        setupToken: 'st',
+        name: 'Ana',
+      },
     });
 
     const [entry] = lines();
     const text = JSON.stringify(entry);
-    for (const secret of ['kanban_sid=abc', 'Bearer x', '"p1"', '"p2"', '"p3"', '"t"']) {
+    for (const secret of ['kanban_sid=abc', 'Bearer x', '"p1"', '"p2"', '"p3"', '"t"', '"st"']) {
       expect(text).not.toContain(secret);
     }
     expect(entry).toMatchObject({
@@ -58,6 +65,7 @@ describe('logger', () => {
         currentPassword: '[REDACTED]',
         newPassword: '[REDACTED]',
         token: '[REDACTED]',
+        setupToken: '[REDACTED]',
         name: 'Ana',
       },
     });

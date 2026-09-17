@@ -9,6 +9,10 @@ const booleanFromString = z
   .enum(['true', 'false'], { error: 'Use "true" ou "false"' })
   .transform((value) => value === 'true');
 
+/** Tamanho mínimo e máximo do `SETUP_TOKEN` (o corpo do setup aceita até 200 caracteres). */
+export const SETUP_TOKEN_MIN_LENGTH = 16;
+export const SETUP_TOKEN_MAX_LENGTH = 200;
+
 const postgresUrlSchema = z
   .url({ protocol: /^postgres(ql)?$/, error: 'URL PostgreSQL inválida (postgres://...)' })
   .trim();
@@ -19,6 +23,7 @@ const postgresUrlSchema = z
  * o cookie `Secure`, o prefixo `__Host-`, o OpenAPI e os parâmetros do Argon2 dependem de
  * `NODE_ENV`. HTTPS fora de produção indica produção sem `NODE_ENV=production` (cookie sem
  * `Secure`, `/docs` exposto); produção em HTTP deixaria a sessão trafegar sem TLS.
+ * Produção também exige `SETUP_TOKEN` (overview.md §6.8): o setup inicial não fica aberto.
  */
 export const envSchema = z
   .object({
@@ -36,6 +41,20 @@ export const envSchema = z
         error: 'Informe só a origem, sem caminho nem barra final',
       }),
     TRUST_PROXY: booleanFromString.default(false),
+    /**
+     * Código exigido no `POST /api/setup` (api.md §4). Obrigatório em produção: sem ele, quem
+     * chegar primeiro à instância vazia vira Admin.
+     */
+    SETUP_TOKEN: z
+      .string()
+      .trim()
+      .min(SETUP_TOKEN_MIN_LENGTH, {
+        error: `Use pelo menos ${SETUP_TOKEN_MIN_LENGTH} caracteres`,
+      })
+      .max(SETUP_TOKEN_MAX_LENGTH, {
+        error: `Use no máximo ${SETUP_TOKEN_MAX_LENGTH} caracteres`,
+      })
+      .optional(),
     LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
   })
   .superRefine((env, ctx) => {
@@ -52,6 +71,13 @@ export const envSchema = z
         code: 'custom',
         path: ['NODE_ENV'],
         message: 'APP_ORIGIN em https:// exige NODE_ENV=production',
+      });
+    }
+    if (env.NODE_ENV === 'production' && env.SETUP_TOKEN === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['SETUP_TOKEN'],
+        message: 'Em produção (NODE_ENV=production) defina SETUP_TOKEN (código do setup inicial)',
       });
     }
   });

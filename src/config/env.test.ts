@@ -11,6 +11,8 @@ const base = {
   APP_ORIGIN: 'http://localhost:5173',
 };
 
+const SETUP_TOKEN = 'codigo-de-setup-com-32-caracteres';
+
 function issuesOf(source: Record<string, string | undefined>): string[] {
   try {
     parseEnv(source);
@@ -41,10 +43,41 @@ describe('parseEnv', () => {
       PORT: '4010',
       TRUST_PROXY: 'true',
       NODE_ENV: 'production',
+      SETUP_TOKEN,
     });
     expect(env.PORT).toBe(4010);
     expect(env.TRUST_PROXY).toBe(true);
     expect(parseEnv({ ...base, TRUST_PROXY: 'false' }).TRUST_PROXY).toBe(false);
+  });
+
+  describe('SETUP_TOKEN', () => {
+    it('opcional fora de produção', () => {
+      expect(parseEnv(base).SETUP_TOKEN).toBeUndefined();
+      expect(parseEnv({ ...base, SETUP_TOKEN }).SETUP_TOKEN).toBe(SETUP_TOKEN);
+    });
+
+    it('16 a 200 caracteres (com trim)', () => {
+      expect(parseEnv({ ...base, SETUP_TOKEN: 'a'.repeat(16) }).SETUP_TOKEN).toBe('a'.repeat(16));
+      expect(parseEnv({ ...base, SETUP_TOKEN: ` ${'a'.repeat(16)} ` }).SETUP_TOKEN).toBe(
+        'a'.repeat(16),
+      );
+      expect(parseEnv({ ...base, SETUP_TOKEN: 'a'.repeat(200) }).SETUP_TOKEN).toHaveLength(200);
+      expect(issuesOf({ ...base, SETUP_TOKEN: 'a'.repeat(15) })).toEqual(['SETUP_TOKEN']);
+      expect(issuesOf({ ...base, SETUP_TOKEN: 'a'.repeat(201) })).toEqual(['SETUP_TOKEN']);
+    });
+
+    it('produção sem SETUP_TOKEN → erro de configuração (fail-closed)', () => {
+      const prod = { ...base, NODE_ENV: 'production', APP_ORIGIN: 'https://kanban.example' };
+      expect(issuesOf(prod)).toEqual(['SETUP_TOKEN']);
+      expect(issuesOf({ ...prod, SETUP_TOKEN: '   ' })).toEqual(['SETUP_TOKEN']);
+      expect(() => parseEnv(prod)).toThrow(/SETUP_TOKEN/);
+      expect(parseEnv({ ...prod, SETUP_TOKEN }).SETUP_TOKEN).toBe(SETUP_TOKEN);
+    });
+
+    it('não expõe o valor na mensagem de erro', () => {
+      const short = 'curto-secreto';
+      expect(() => parseEnv({ ...base, SETUP_TOKEN: short })).not.toThrow(short);
+    });
   });
 
   it('trata variável vazia como ausente', () => {
@@ -71,13 +104,13 @@ describe('parseEnv', () => {
 
   describe('NODE_ENV × protocolo de APP_ORIGIN (fail-closed)', () => {
     it('produção exige https', () => {
-      expect(issuesOf({ ...base, NODE_ENV: 'production' })).toEqual(['APP_ORIGIN']);
-      expect(
-        issuesOf({ ...base, NODE_ENV: 'production', APP_ORIGIN: 'http://kanban.example' }),
-      ).toEqual(['APP_ORIGIN']);
-      expect(
-        parseEnv({ ...base, NODE_ENV: 'production', APP_ORIGIN: 'https://kanban.example' }),
-      ).toMatchObject({ NODE_ENV: 'production', APP_ORIGIN: 'https://kanban.example' });
+      const prod = { ...base, NODE_ENV: 'production', SETUP_TOKEN };
+      expect(issuesOf(prod)).toEqual(['APP_ORIGIN']);
+      expect(issuesOf({ ...prod, APP_ORIGIN: 'http://kanban.example' })).toEqual(['APP_ORIGIN']);
+      expect(parseEnv({ ...prod, APP_ORIGIN: 'https://kanban.example' })).toMatchObject({
+        NODE_ENV: 'production',
+        APP_ORIGIN: 'https://kanban.example',
+      });
     });
 
     it.each(['development', 'test', undefined])(

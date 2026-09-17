@@ -13,8 +13,13 @@ import { getSetupStatus, performSetup } from './service';
 /** Setup: 5 requisições / 15 min por IP (overview.md §6.4). */
 export const SETUP_RATE_LIMIT = { max: 5, timeWindowMs: 15 * 60_000 } as const;
 
+export interface SetupRoutesOptions {
+  /** `SETUP_TOKEN` do ambiente. Ausente: o setup não exige código (desenvolvimento local). */
+  setupToken?: string | undefined;
+}
+
 /** `GET /api/setup/status` e `POST /api/setup` · Públicas (api.md §4). */
-export const setupRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
+export const setupRoutes: FastifyPluginCallbackZod<SetupRoutesOptions> = (app, opts, done) => {
   app.get(
     '/api/setup/status',
     {
@@ -25,7 +30,7 @@ export const setupRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
         response: { 200: setupStatusResponseSchema },
       },
     },
-    () => getSetupStatus(app.db),
+    () => getSetupStatus(app.db, opts.setupToken),
   );
 
   app.post(
@@ -50,7 +55,7 @@ export const setupRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
     },
     async (request, reply) => {
       const { token, user, workspace } = await performSetup(
-        { db: app.db, passwords: app.passwords, now: app.clock() },
+        { db: app.db, passwords: app.passwords, now: app.clock(), setupToken: opts.setupToken },
         request.body,
       );
       reply.setSessionCookie(token);

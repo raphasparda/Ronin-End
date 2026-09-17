@@ -1,5 +1,5 @@
 import { authSessionResponseSchema, errorResponseSchema } from '@raphasparda/ronin-shared';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   cookieHeaderOf,
@@ -7,10 +7,32 @@ import {
   jsonMutationHeaders,
   seedUser,
   sessionCookieOf,
+  testPasswords,
 } from '../../../test/auth';
 import { describeDb, useTestDatabase } from '../../../test/db';
 import type { App } from '../../app';
 import { sessions, users, workspace } from '../../db/schema';
+import type { PasswordHasher } from '../../lib/password';
+
+import { isSetupTokenValid } from './service';
+
+const SETUP_TOKEN = 'codigo-de-setup-com-32-caracteres';
+
+describe('isSetupTokenValid', () => {
+  it('sem SETUP_TOKEN configurado, qualquer entrada passa', () => {
+    expect(isSetupTokenValid(undefined, undefined)).toBe(true);
+    expect(isSetupTokenValid(undefined, 'qualquer')).toBe(true);
+  });
+
+  it('com SETUP_TOKEN, exige o código exato (tamanhos diferentes não lançam)', () => {
+    expect(isSetupTokenValid(SETUP_TOKEN, SETUP_TOKEN)).toBe(true);
+    expect(isSetupTokenValid(SETUP_TOKEN, undefined)).toBe(false);
+    expect(isSetupTokenValid(SETUP_TOKEN, '')).toBe(false);
+    expect(isSetupTokenValid(SETUP_TOKEN, 'x')).toBe(false);
+    expect(isSetupTokenValid(SETUP_TOKEN, `${SETUP_TOKEN} `)).toBe(false);
+    expect(isSetupTokenValid(SETUP_TOKEN, SETUP_TOKEN.toUpperCase())).toBe(false);
+  });
+});
 
 const validBody = {
   workspaceName: '  Ronin  ',
@@ -40,12 +62,85 @@ describeDb('módulo setup (kanban_test)', () => {
     const a = await start();
     const before = await a.inject({ method: 'GET', url: '/api/setup/status' });
     expect(before.statusCode).toBe(200);
-    expect(before.json()).toEqual({ needsSetup: true });
+    expect(before.json()).toEqual({ needsSetup: true, requiresSetupToken: false });
 
     expect((await postSetup(a, validBody)).statusCode).toBe(201);
 
     const after = await a.inject({ method: 'GET', url: '/api/setup/status' });
-    expect(after.json()).toEqual({ needsSetup: false });
+    expect(after.json()).toEqual({ needsSetup: false, requiresSetupToken: false });
+  });
+
+  describe('com SETUP_TOKEN configurado', () => {
+    const startWithToken = async (passwords?: PasswordHasher) => {
+      app = await createDbTestApp({
+        envOverrides: { SETUP_TOKEN },
+        ...(passwords ? { passwords } : {}),
+      });
+      return app;
+    };
+
+    it('GET /api/setup/status informa requiresSetupToken: true', async () => {
+      const a = await startWithToken();
+      const res = await a.inject({ method: 'GET', url: '/api/setup/status' });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ needsSetup: true, requiresSetupToken: true });
+      expect(res.body).not.toContain(SETUP_TOKEN);
+    });
+
+    it.each([
+      ['sem código', undefined],
+      ['com código errado', 'codigo-errado-com-32-caracteres!'],
+      ['com código vazio', ''],
+    ])(
+      'POST /api/setup %s → 403 SETUP_TOKEN_INVALID, sem hash e sem criar nada',
+      async (_, token) => {
+        const hash = vi.fn((password: string) => testPasswords.hash(password));
+        const a = await startWithToken({ ...testPasswords, hash });
+        const res = await postSetup(
+          a,
+          token === undefined ? validBody : { ...validBody, setupToken: token },
+        );
+        expect(res.statusCode).toBe(403);
+        expect(errorResponseSchema.strict().parse(res.json())).toEqual({
+          error: { code: 'SETUP_TOKEN_INVALID', message: 'Código de configuração inválido.' },
+        });
+        expect(hash).not.toHaveBeenCalled();
+        expect(res.headers['set-cookie']).toBeUndefined();
+        expect(await db().$count(users)).toBe(0);
+        expect(await db().$count(workspace)).toBe(0);
+      },
+    );
+
+    it('POST /api/setup com o código certo → 201 e cria o Admin', async () => {
+      const a = await startWithToken();
+      const res = await postSetup(a, { ...validBody, setupToken: SETUP_TOKEN });
+      expect(res.statusCode).toBe(201);
+      expect(authSessionResponseSchema.strict().parse(res.json()).user.role).toBe('admin');
+      expect(sessionCookieOf(res)).toBeDefined();
+      expect(await db().$count(users)).toBe(1);
+
+      const status = await a.inject({ method: 'GET', url: '/api/setup/status' });
+      expect(status.json()).toEqual({ needsSetup: false, requiresSetupToken: true });
+    });
+
+    it('código acima de 200 caracteres → 400 VALIDATION_ERROR', async () => {
+      const a = await startWithToken();
+      const res = await postSetup(a, { ...validBody, setupToken: 'a'.repeat(201) });
+      expect(res.statusCode).toBe(400);
+      expect(errorResponseSchema.parse(res.json()).error.details?.[0]?.path).toBe('setupToken');
+    });
+
+    it('tentativas com código errado contam no rate limit (5 / 15 min por IP)', async () => {
+      const a = await startWithToken();
+      const wrong = { ...validBody, setupToken: 'codigo-errado-com-32-caracteres!' };
+      for (let i = 0; i < 5; i++) {
+        expect((await postSetup(a, wrong)).statusCode).toBe(403);
+      }
+      const blocked = await postSetup(a, { ...validBody, setupToken: SETUP_TOKEN });
+      expect(blocked.statusCode).toBe(429);
+      expect(errorResponseSchema.parse(blocked.json()).error.code).toBe('RATE_LIMITED');
+      expect(await db().$count(users)).toBe(0);
+    });
   });
 
   it('POST /api/setup: 201, cria workspace + Admin normalizado + sessão, e grava o cookie', async () => {

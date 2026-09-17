@@ -42,14 +42,20 @@ export const authSessionResponseSchema = z.object({
 // Setup (api.md §4)
 // ---------------------------------------------------------------------------
 
-/** `GET /api/setup/status` → 200. */
+/**
+ * `GET /api/setup/status` → 200. `requiresSetupToken` indica que a instância tem `SETUP_TOKEN`
+ * configurado: a tela de setup precisa pedir o código de configuração.
+ */
 export const setupStatusResponseSchema = z.object({
   needsSetup: z.boolean(),
+  requiresSetupToken: z.boolean(),
 });
 
 /**
  * `POST /api/setup` (corpo). `timezone` é opcional e vira `America/Sao_Paulo`.
  * A senha não pode ser igual ao e-mail (overview.md §6.1).
+ * `setupToken`: código de configuração, exigido pelo servidor só quando `SETUP_TOKEN` está
+ * configurado (ausente ou errado → `403 SETUP_TOKEN_INVALID`). Sem `trim`: é comparado como veio.
  */
 export const setupRequestSchema = z
   .object({
@@ -58,6 +64,10 @@ export const setupRequestSchema = z
     name: userNameSchema,
     email: emailSchema,
     password: passwordSchema,
+    setupToken: z
+      .string({ error: 'Código de configuração inválido' })
+      .max(200, { error: 'O código de configuração pode ter no máximo 200 caracteres' })
+      .optional(),
   })
   .refine((body) => !isPasswordSameAsEmail(body.password, body.email), {
     error: PASSWORD_SAME_AS_EMAIL_MESSAGE,

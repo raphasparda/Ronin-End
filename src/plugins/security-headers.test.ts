@@ -65,7 +65,11 @@ describe('plugins/security-headers', () => {
 
   it('em produção os headers também valem', async () => {
     const prod = await createTestApp({
-      env: testEnv({ NODE_ENV: 'production', APP_ORIGIN: 'https://kanban.example' }),
+      env: testEnv({
+        NODE_ENV: 'production',
+        APP_ORIGIN: 'https://kanban.example',
+        SETUP_TOKEN: 'codigo-de-setup-de-teste',
+      }),
     });
     try {
       const res = await prod.inject({ method: 'GET', url: '/api/health' });

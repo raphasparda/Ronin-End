@@ -16,6 +16,7 @@ export const LOG_REDACT_PATHS = [
   '*.currentPassword',
   '*.newPassword',
   '*.token',
+  '*.setupToken',
 ];
 
 const MAX_CAUSE_DEPTH = 5;

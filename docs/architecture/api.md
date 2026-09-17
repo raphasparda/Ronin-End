@@ -1,6 +1,6 @@
 # Kanban: contrato da API REST (MVP)
 
-> Status: v1.9 (2026-09-17; v1.2 alinhou ao `scope.md` v2: sem gamificação, cor por lista, prioridade do card, reabrir para o topo; v1.3 adicionou `415 UNSUPPORTED_MEDIA_TYPE`; v1.4 (2026-09-17) fechou ambiguidades ao implementar os schemas das Fatias 2 a 9, ver §18; v1.5 registrou decisões do backend das Fatias 2 e 3, §18.1; v1.6 registrou decisões do backend da Fatia 4, §18.2; v1.7 registrou decisões do backend das Fatias 5 e 6, §18.3; v1.8 registrou decisões do backend das Fatias 7, 8 e 9, §18.4; v1.9 registrou as correções da revisão de segurança, §18.5). Complementa `overview.md`. Os schemas Zod em `packages/shared/src/schemas/` são a fonte da verdade em código e devem refletir exatamente este documento. Mudança de contrato = atualizar este arquivo no mesmo PR.
+> Status: v1.9 (2026-09-17; v1.2 alinhou ao `scope.md` v2: sem gamificação, cor por lista, prioridade do card, reabrir para o topo; v1.3 adicionou `415 UNSUPPORTED_MEDIA_TYPE`; v1.4 (2026-09-17) fechou ambiguidades ao implementar os schemas das Fatias 2 a 9, ver §18; v1.5 registrou decisões do backend das Fatias 2 e 3, §18.1; v1.6 registrou decisões do backend da Fatia 4, §18.2; v1.7 registrou decisões do backend das Fatias 5 e 6, §18.3; v1.8 registrou decisões do backend das Fatias 7, 8 e 9, §18.4; v1.9 registrou as correções da revisão de segurança, §18.5; v1.10 (2026-09-17) adicionou o código de configuração do setup, `requiresSetupToken` e `403 SETUP_TOKEN_INVALID`, §18.6). Complementa `overview.md`. Os schemas Zod em `packages/shared/src/schemas/` são a fonte da verdade em código e devem refletir exatamente este documento. Mudança de contrato = atualizar este arquivo no mesmo PR.
 
 ## 1. Convenções
 
@@ -122,6 +122,7 @@ Envelope: `{ "error": { "code": ErrorCode, "message": string, "details"?: { path
 | 401 | `INVALID_CREDENTIALS` | login falhou (mensagem genérica: "E-mail ou senha incorretos.") |
 | 403 | `FORBIDDEN` | papel/autoria insuficiente |
 | 403 | `CSRF_REJECTED` | Origin/header CSRF ausente ou inválido |
+| 403 | `SETUP_TOKEN_INVALID` | setup com `SETUP_TOKEN` configurado e `setupToken` ausente ou errado (mensagem: "Código de configuração inválido.") |
 | 404 | `NOT_FOUND` | recurso inexistente (ou notificação de outro usuário) |
 | 404 | `SETUP_REQUIRED` | rota que exige instância configurada chamada antes do setup (login) |
 | 409 | `SETUP_ALREADY_DONE` | setup com usuários existentes |
@@ -156,10 +157,11 @@ Regras transversais aplicadas por todas as rotas de conteúdo:
 200 `{ status: 'ok', db: 'ok' }` · 503 `SERVICE_UNAVAILABLE`.
 
 ### `GET /api/setup/status` · Pública
-200 `{ needsSetup: boolean }` (true se não há usuários).
+200 `{ needsSetup: boolean, requiresSetupToken: boolean }`. `needsSetup`: true se não há usuários. `requiresSetupToken`: true se a instância tem `SETUP_TOKEN` configurado (sempre em produção); a tela de setup então pede o código de configuração.
 
 ### `POST /api/setup` · Pública · rate limit 5/15min/IP
-Body `{ workspaceName: string, timezone?: string /* default America/Sao_Paulo */, name: string, email: string, password: string }`
+Body `{ workspaceName: string, timezone?: string /* default America/Sao_Paulo */, name: string, email: string, password: string, setupToken?: string /* até 200 caracteres */ }`
+- Com `SETUP_TOKEN` configurado: `setupToken` ausente ou diferente → `403 SETUP_TOKEN_INVALID`, checado antes de consultar o banco e de gerar o hash da senha (comparação em tempo constante). Sem `SETUP_TOKEN` (desenvolvimento local), o campo é ignorado. Tentativas erradas contam no rate limit da rota.
 - Transação com `pg_advisory_xact_lock`; se já há usuário → `409 SETUP_ALREADY_DONE`.
 - Cria/atualiza `workspace`, cria usuário `admin`, cria sessão (Set-Cookie).
 201 `{ user: SessionUser, workspace: Workspace }`.
@@ -528,3 +530,13 @@ Nenhuma muda schema nem migration. Rotas afetadas: `POST /api/auth/login`, `POST
 43. **Tokens de quem perde o poder de emiti-los**: rebaixar Admin para Member (`PATCH /api/admin/users/:userId`), desativar e anonimizar revogam (`revoked_at = now`), **na mesma transação**, os convites e links de redefinição **pendentes** (não usados, não revogados, não expirados) com `created_by` = alvo. Usados, expirados e já revogados não mudam; tokens de outros Admins também não. Mudar para o mesmo papel é no-op (não revoga). Regra que falha (`LAST_ADMIN`) desfaz tudo.
 44. **Configuração fail-closed** (`config/env.ts`): `NODE_ENV=production` exige `APP_ORIGIN` em `https://` (erro em `APP_ORIGIN`); `APP_ORIGIN` em `https://` com `NODE_ENV` diferente de `production` (inclusive ausente, que vira `development`) é erro (em `NODE_ENV`), porque indica produção sem cookie `Secure`/`__Host-`, com `/api/docs` exposto. Dev local segue em `http://127.0.0.1:5310`. Requisitos do deploy em `overview.md` §6.8.
 45. **Erros de banco nos logs** (`logger.ts`, serializer de `err`): `DrizzleQueryError` sai só com `type`, `query` (sem `params`), `code` e `constraint` da causa, `stack` só com os frames e `cause` higienizada; `DatabaseError` do `pg` sai com `code`, `constraint`, `table`, `routine` e frames, sem `message`, `detail` (ex.: `Key (email)=(...)`), `where` etc. Os demais erros mantêm `type`, `message`, `stack` e propriedades próprias, mas `message`/`stack` são só do próprio erro (o serializer padrão do pino concatena os das causas) e a `cause` passa pelo mesmo serializer.
+
+### 18.6 Código de configuração do setup (v1.10)
+
+Preparação do deploy público (`docs/ops/deploy-render.md`). Muda o contrato de `GET /api/setup/status` e `POST /api/setup`; sem migration.
+
+46. **Setup protegido por código** (`modules/setup`, `config/env.ts`): enquanto não existe usuário, quem chegasse primeiro à instância publicada viraria Admin. A variável `SETUP_TOKEN` (16 a 200 caracteres) passa a ser **obrigatória com `NODE_ENV=production`** (a API não sobe sem ela, como na regra do `https://`, `overview.md` §6.8) e opcional fora de produção.
+    - `GET /api/setup/status` ganha `requiresSetupToken: boolean` (`true` quando `SETUP_TOKEN` está configurado, mesmo depois do setup). O valor do código nunca sai na resposta.
+    - `POST /api/setup` ganha `setupToken?: string` (máximo 200 caracteres, sem `trim`; acima disso `400 VALIDATION_ERROR` em `setupToken`). Com `SETUP_TOKEN` configurado, ausente ou errado → `403 SETUP_TOKEN_INVALID` ("Código de configuração inválido."), **antes** do atalho de `SETUP_ALREADY_DONE` e do Argon2id. A comparação calcula SHA-256 dos dois lados e usa `crypto.timingSafeEqual` (tamanho e conteúdo não vazam pelo tempo).
+    - O rate limit da rota (5 req/15 min por IP) continua valendo e conta as tentativas com código errado. `setupToken` entra no `redact` dos logs.
+    - Sem `SETUP_TOKEN` (dev local, testes, E2E): comportamento anterior, `requiresSetupToken: false`.
