@@ -279,7 +279,12 @@ export async function startDevDatabase({ databaseUrl, extraUrls = [], log = defa
     );
   }
 
-  const local = isLoopback(t.host);
+  // DEV_DB_EXTERNAL_ONLY=true (CI): só usa um PostgreSQL que já responde (serviço do GitHub
+  // Actions); nunca procura os binários nem sobe o cluster local.
+  const externalOnly = ['1', 'true'].includes(
+    process.env.DEV_DB_EXTERNAL_ONLY?.trim().toLowerCase() ?? '',
+  );
+  const local = isLoopback(t.host) && !externalOnly;
   const bins = local ? await binaries() : undefined;
   const ours = bins ? await clusterRunning(bins) : false;
 
@@ -295,7 +300,9 @@ export async function startDevDatabase({ databaseUrl, extraUrls = [], log = defa
   } else {
     if (!bins) {
       throw new Error(
-        `PostgreSQL em ${endpoint(t)} não responde (host remoto: o cluster local só roda em 127.0.0.1).`,
+        externalOnly
+          ? `PostgreSQL em ${endpoint(t)} não responde (DEV_DB_EXTERNAL_ONLY=true: o cluster local não é iniciado).`
+          : `PostgreSQL em ${endpoint(t)} não responde (host remoto: o cluster local só roda em 127.0.0.1).`,
       );
     }
     if (ours) {
