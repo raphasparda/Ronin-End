@@ -13,7 +13,6 @@
 O Ronin é um app de tarefas em quadros, no estilo Trello e ClickUp, para uma equipe pequena rodar no próprio servidor, com backend e dados próprios. Este repositório tem a **API REST** e o pacote de **contratos compartilhados** com o front.
 
 - Front-end (React + Vite): [raphasparda/Ronin-front](https://github.com/raphasparda/Ronin-front)
-- Público deste README: quem avalia, roda ou desenvolve o projeto.
 
 ## Sumário
 
