@@ -60,7 +60,7 @@ export const setupRoutes: FastifyPluginCallbackZod<SetupRoutesOptions> = (app, o
         request.body,
       );
       reply.setSessionCookie(token);
-      return reply.status(201).send({ user, workspace, features: appFeatures() });
+      return reply.status(201).send({ user, workspace, features: appFeatures(app) });
     },
   );
 

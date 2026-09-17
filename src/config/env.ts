@@ -98,6 +98,25 @@ export const envSchema = z
       })
       .optional(),
     LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
+    /**
+     * Capa do card no Cloudflare R2 (Fatia 11, ADR 0016). As quatro primeiras são **tudo ou
+     * nada**: sem elas o recurso fica desligado (`features.cardCovers: false`); com parte delas a
+     * API não sobe (fail-closed, overview.md §6.9).
+     */
+    R2_ACCOUNT_ID: z.string().trim().min(1).optional(),
+    R2_BUCKET: z.string().trim().min(1).optional(),
+    R2_ACCESS_KEY_ID: z.string().trim().min(1).optional(),
+    R2_SECRET_ACCESS_KEY: z.string().trim().min(1).optional(),
+    /** Padrão: `https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com`. */
+    R2_ENDPOINT: z
+      .url({ protocol: /^https?$/, error: 'Endpoint inválido (https://host)' })
+      .trim()
+      .optional(),
+    /** Base das URLs **assinadas** de leitura (domínio próprio). O bucket continua privado. */
+    R2_PUBLIC_BASE_URL: z
+      .url({ protocol: /^https?$/, error: 'Base inválida (https://host)' })
+      .trim()
+      .optional(),
   })
   .superRefine((env, ctx) => {
     const https = env.APP_ORIGIN.startsWith('https://');
@@ -114,6 +133,23 @@ export const envSchema = z
         path: ['NODE_ENV'],
         message: 'APP_ORIGIN em https:// exige NODE_ENV=production',
       });
+    }
+    const r2 = {
+      R2_ACCOUNT_ID: env.R2_ACCOUNT_ID,
+      R2_BUCKET: env.R2_BUCKET,
+      R2_ACCESS_KEY_ID: env.R2_ACCESS_KEY_ID,
+      R2_SECRET_ACCESS_KEY: env.R2_SECRET_ACCESS_KEY,
+    };
+    const missing = Object.entries(r2).filter(([, value]) => value === undefined);
+    if (missing.length > 0 && missing.length < Object.keys(r2).length) {
+      for (const [variable] of missing) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [variable],
+          message:
+            'As variáveis do R2 são tudo ou nada: defina R2_ACCOUNT_ID, R2_BUCKET, R2_ACCESS_KEY_ID e R2_SECRET_ACCESS_KEY, ou nenhuma delas',
+        });
+      }
     }
     if (env.NODE_ENV === 'production' && env.SETUP_TOKEN === undefined) {
       ctx.addIssue({

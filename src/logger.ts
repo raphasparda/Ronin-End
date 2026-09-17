@@ -17,6 +17,11 @@ export const LOG_REDACT_PATHS = [
   '*.newPassword',
   '*.token',
   '*.setupToken',
+  // Fatia 11: segredo do R2 e URLs assinadas (a assinatura é credencial temporária, ADR 0016).
+  '*.secretAccessKey',
+  '*.R2_SECRET_ACCESS_KEY',
+  '*.uploadUrl',
+  '*.signedUrl',
 ];
 
 const MAX_CAUSE_DEPTH = 5;

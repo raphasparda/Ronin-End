@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { createCoverStorage } from './cover-storage';
 import { EnvValidationError, loadDotEnv, parseEnv } from './env';
 
 const base = {
@@ -113,6 +114,51 @@ describe('parseEnv', () => {
     it('não expõe o valor na mensagem de erro', () => {
       const short = 'curto-secreto';
       expect(() => parseEnv({ ...base, SETUP_TOKEN: short })).not.toThrow(short);
+    });
+  });
+
+  describe('R2 (capa do card, ADR 0016)', () => {
+    const r2 = {
+      R2_ACCOUNT_ID: 'conta',
+      R2_BUCKET: 'ronin-capas',
+      R2_ACCESS_KEY_ID: 'chave',
+      R2_SECRET_ACCESS_KEY: 'segredo-do-token',
+    };
+
+    it('sem nenhuma variável: sobe e o recurso fica desligado', () => {
+      const env = parseEnv(base);
+      expect(env.R2_BUCKET).toBeUndefined();
+      expect(createCoverStorage(env)).toBeNull();
+    });
+
+    it('com as quatro: cliente montado com o endpoint padrão da conta', () => {
+      const env = parseEnv({ ...base, ...r2 });
+      const storage = createCoverStorage(env);
+      expect(storage?.bucket).toBe('ronin-capas');
+      const url = new URL(
+        storage?.presignGet('covers/a/b', {
+          expiresInSeconds: 60,
+          now: new Date('2026-09-17T14:03:00.000Z'),
+        }) ?? '',
+      );
+      expect(url.origin).toBe('https://conta.r2.cloudflarestorage.com');
+    });
+
+    it('tudo ou nada: parte das variáveis não sobe (fail-closed)', () => {
+      for (const missing of Object.keys(r2)) {
+        const partial = { ...base, ...r2, [missing]: undefined };
+        expect(issuesOf(partial)).toEqual([missing]);
+      }
+    });
+
+    it('não expõe o segredo na mensagem de erro', () => {
+      try {
+        parseEnv({ ...base, R2_SECRET_ACCESS_KEY: 'segredo-do-token' });
+        throw new Error('deveria falhar');
+      } catch (err) {
+        expect(err).toBeInstanceOf(EnvValidationError);
+        expect((err as Error).message).not.toContain('segredo-do-token');
+      }
     });
   });
 

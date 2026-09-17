@@ -14,6 +14,7 @@ import {
   type ZodTypeProvider,
 } from 'fastify-type-provider-zod';
 
+import { createCoverStorage } from './config/cover-storage';
 import type { Env } from './config/env';
 import {
   createDb,
@@ -23,6 +24,7 @@ import {
   type DatabaseCheck,
 } from './db/client';
 import { argon2ParamsFor, createPasswordHasher, type PasswordHasher } from './lib/password';
+import type { R2Client } from './lib/r2';
 import { buildLoggerOptions } from './logger';
 import { adminRoutes } from './modules/admin/routes';
 import { authRoutes } from './modules/auth/routes';
@@ -76,6 +78,11 @@ declare module 'fastify' {
     db: Database;
     /** Hash/verificação de senha (Argon2id; parâmetros leves só com NODE_ENV=test). */
     passwords: PasswordHasher;
+    /**
+     * Bucket das capas de card (Fatia 11, ADR 0016) ou `null` sem R2 configurado. Com `null`,
+     * `features.cardCovers` é `false` e as rotas de capa respondem `503`.
+     */
+    coverStorage: R2Client | null;
   }
   interface FastifyContextConfig {
     /** Rota acessível sem sessão (overview.md §6.2). */
@@ -91,6 +98,8 @@ export interface BuildAppOptions {
   clock?: Clock;
   /** Substitui o hasher de senha. Padrão: Argon2id com os parâmetros de `NODE_ENV`. */
   passwords?: PasswordHasher;
+  /** Substitui o cliente do R2 (testes usam um dublê; nenhum teste fala com a rede). */
+  coverStorage?: R2Client | null;
   /**
    * Liga a limpeza periódica (`plugins/maintenance.ts`). Padrão: só em `production` (em dev o
    * `tsx watch` reinicia a cada gravação e o banco é descartável; nos testes, `runMaintenance` é
@@ -142,6 +151,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     await pool.end();
   });
   app.decorate('passwords', opts.passwords ?? createPasswordHasher(argon2ParamsFor(env.NODE_ENV)));
+  app.decorate('coverStorage', opts.coverStorage ?? createCoverStorage(env));
 
   if (env.NODE_ENV !== 'production') {
     await registerOpenApi(app);

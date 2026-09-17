@@ -40,7 +40,7 @@ export const authRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
         { ip: request.ip, currentSessionId: request.sessionId },
       );
       reply.setSessionCookie(token);
-      return { user, workspace, features: appFeatures() };
+      return { user, workspace, features: appFeatures(app) };
     },
   );
 
@@ -75,7 +75,7 @@ export const authRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
     async (request) => ({
       user: requireUser(request),
       workspace: await getWorkspace(app.db),
-      features: appFeatures(),
+      features: appFeatures(app),
     }),
   );
 

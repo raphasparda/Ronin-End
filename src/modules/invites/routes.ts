@@ -49,7 +49,7 @@ export const inviteRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
         request.sessionId,
       );
       reply.setSessionCookie(token);
-      return reply.status(201).send({ user, workspace, features: appFeatures() });
+      return reply.status(201).send({ user, workspace, features: appFeatures(app) });
     },
   );
 
