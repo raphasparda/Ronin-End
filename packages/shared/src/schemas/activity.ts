@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { cardPrioritySchema, isoDateTimeSchema, uuidSchema } from './common';
+import { cardPrioritySchema, cardVisibilitySchema, isoDateTimeSchema, uuidSchema } from './common';
 
 // ---------------------------------------------------------------------------
 // Atividade do card (api.md §11, overview.md §5.3, Fatia 4)
@@ -19,6 +19,12 @@ export const ACTIVITY_TYPES = [
   'card_reopened',
   'card_archived',
   'card_restored',
+  // Fatia 11 (ADR 0015 e 0016).
+  'card_visibility_changed',
+  'card_viewer_added',
+  'card_viewer_removed',
+  'card_cover_changed',
+  'card_cover_removed',
 ] as const;
 
 export const activityTypeSchema = z.enum(ACTIVITY_TYPES);
@@ -64,6 +70,14 @@ export const activityDataSchemas = {
   card_reopened: emptyDataSchema,
   card_archived: emptyDataSchema,
   card_restored: emptyDataSchema,
+  card_visibility_changed: z.object({
+    from: cardVisibilitySchema,
+    to: cardVisibilitySchema,
+  }),
+  card_viewer_added: z.object({ userId: uuidSchema }),
+  card_viewer_removed: z.object({ userId: uuidSchema }),
+  card_cover_changed: emptyDataSchema,
+  card_cover_removed: emptyDataSchema,
 } as const satisfies Record<(typeof ACTIVITY_TYPES)[number], z.ZodType>;
 
 type DataSchemas = typeof activityDataSchemas;
@@ -96,6 +110,11 @@ export const activitySchema = z.discriminatedUnion('type', [
   activityVariant('card_reopened'),
   activityVariant('card_archived'),
   activityVariant('card_restored'),
+  activityVariant('card_visibility_changed'),
+  activityVariant('card_viewer_added'),
+  activityVariant('card_viewer_removed'),
+  activityVariant('card_cover_changed'),
+  activityVariant('card_cover_removed'),
 ]);
 
 /** `GET /api/cards/:cardId/activity` → 200. Até `ACTIVITY_LIMIT`, mais recentes primeiro. */

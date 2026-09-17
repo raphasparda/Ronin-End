@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { ERROR_CODES, ERROR_HTTP_STATUS, errorResponseSchema, isErrorCode } from './errors';
 
 describe('ErrorCode', () => {
-  it('tem os 31 códigos de api.md §3, sem duplicatas, todos com status', () => {
-    expect(ERROR_CODES).toHaveLength(31);
+  it('tem os 35 códigos de api.md §3, sem duplicatas, todos com status', () => {
+    expect(ERROR_CODES).toHaveLength(35);
     expect(new Set(ERROR_CODES).size).toBe(ERROR_CODES.length);
     expect(Object.keys(ERROR_HTTP_STATUS).sort()).toEqual([...ERROR_CODES].sort());
   });
@@ -21,6 +21,11 @@ describe('ErrorCode', () => {
     expect(ERROR_HTTP_STATUS.UNSUPPORTED_MEDIA_TYPE).toBe(415);
     expect(ERROR_HTTP_STATUS.TOO_MANY_ATTEMPTS).toBe(429);
     expect(ERROR_HTTP_STATUS.SERVICE_UNAVAILABLE).toBe(503);
+    // Fatia 11 (ADR 0015 e 0016).
+    expect(ERROR_HTTP_STATUS.CARD_RESTRICTED).toBe(403);
+    expect(ERROR_HTTP_STATUS.CARD_NOT_RESTRICTED).toBe(409);
+    expect(ERROR_HTTP_STATUS.COVER_UPLOAD_INVALID).toBe(409);
+    expect(ERROR_HTTP_STATUS.COVER_STORAGE_UNAVAILABLE).toBe(503);
   });
 
   it('isErrorCode', () => {

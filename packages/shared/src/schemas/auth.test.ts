@@ -177,9 +177,10 @@ describe('respostas', () => {
   const session = {
     user: { id: UUID, name: 'Ana', email: 'ana@exemplo.com', role: 'admin' },
     workspace: { name: 'Equipe', timezone: 'America/Sao_Paulo' },
+    features: { cardCovers: false },
   };
 
-  it('setup, login e me compartilham { user, workspace }', () => {
+  it('setup, login e me compartilham { user, workspace, features }', () => {
     for (const schema of [setupResponseSchema, loginResponseSchema, meResponseSchema]) {
       expect(schema).toBe(authSessionResponseSchema);
     }
@@ -191,6 +192,7 @@ describe('respostas', () => {
       ...session,
       user: { ...session.user, passwordHash: '$argon2id$...', status: 'active' },
       workspace: { ...session.workspace, id: 1 },
+      features: { ...session.features, r2Bucket: 'capas' },
     });
     expect(parsed).toEqual(session);
   });

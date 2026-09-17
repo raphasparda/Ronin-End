@@ -13,6 +13,7 @@ export * from './schemas/checklists';
 export * from './schemas/comments';
 export * from './schemas/activity';
 export * from './schemas/notifications';
+export * from './domain/card-access';
 export * from './domain/due-state';
 export * from './domain/palette';
 export * from './domain/priority';

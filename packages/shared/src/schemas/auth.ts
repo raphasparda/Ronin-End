@@ -32,10 +32,19 @@ export const workspaceSchema = z.object({
   timezone: z.string(),
 });
 
-/** `{ user, workspace }`: resposta de setup, login e `auth/me`. */
+/**
+ * Recursos ligados nesta instância (dependem de configuração, não de papel; Fatia 11).
+ * `cardCovers` é `false` quando a instância não tem R2 configurado (ADR 0016).
+ */
+export const featuresSchema = z.object({
+  cardCovers: z.boolean(),
+});
+
+/** `{ user, workspace, features }`: resposta de setup, login, aceite de convite e `auth/me`. */
 export const authSessionResponseSchema = z.object({
   user: sessionUserSchema,
   workspace: workspaceSchema,
+  features: featuresSchema,
 });
 
 // ---------------------------------------------------------------------------
@@ -160,6 +169,7 @@ export const completePasswordResetRequestSchema = z.object({
 
 export type SessionUser = z.infer<typeof sessionUserSchema>;
 export type Workspace = z.infer<typeof workspaceSchema>;
+export type Features = z.infer<typeof featuresSchema>;
 export type AuthSessionResponse = z.infer<typeof authSessionResponseSchema>;
 export type SetupStatusResponse = z.infer<typeof setupStatusResponseSchema>;
 /** Corpo do setup como o cliente envia (`timezone` opcional). */

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { CARD_VISIBILITIES } from '../domain/card-access';
 import { CARD_STATUSES } from '../domain/due-state';
 import { PALETTE } from '../domain/palette';
 import { CARD_PRIORITIES } from '../domain/priority';
@@ -15,6 +16,8 @@ export const userStatusSchema = z.enum(['active', 'deactivated']);
 export const cardStatusSchema = z.enum(CARD_STATUSES);
 export const paletteColorSchema = z.enum(PALETTE, { error: 'Cor inválida' });
 export const cardPrioritySchema = z.enum(CARD_PRIORITIES, { error: 'Prioridade inválida' });
+/** Visibilidade do card (Fatia 11, ADR 0015). */
+export const cardVisibilitySchema = z.enum(CARD_VISIBILITIES, { error: 'Visibilidade inválida' });
 
 /** Posição relativa entre irmãos ativos do destino (api.md §2). */
 export const placementSchema = z.discriminatedUnion(

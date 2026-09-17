@@ -16,6 +16,7 @@ import {
   invite,
   label,
   list,
+  lockedCard,
   notification,
   userSummary,
 } from '../test-fixtures';
@@ -23,6 +24,7 @@ import {
 const session = {
   user: { id: ID.user, name: 'Ana', email: 'ana@exemplo.com', role: 'admin' },
   workspace: { name: 'Equipe', timezone: 'America/Sao_Paulo' },
+  features: { cardCovers: true },
 };
 const myCard = { ...cardSummary, boardName: 'Marketing', listName: 'A fazer', listColor: 'blue' };
 
@@ -45,11 +47,14 @@ const responseSamples: Record<string, unknown> = {
   myCardsResponseSchema: { cards: [myCard] },
   boardsResponseSchema: { boards: [board] },
   createBoardResponseSchema: { board, lists: [list] },
-  boardPayloadSchema: { board, lists: [list], cards: [cardSummary], labels: [label] },
+  boardPayloadSchema: { board, lists: [list], cards: [cardSummary, lockedCard], labels: [label] },
   boardResponseSchema: { board },
   boardArchivedResponseSchema: {
     lists: [{ ...list, archivedAt: T0 }],
-    cards: [{ ...cardSummary, archivedAt: T0, listName: 'A fazer', listArchived: false }],
+    cards: [
+      { ...cardSummary, archivedAt: T0, listName: 'A fazer', listArchived: false },
+      lockedCard,
+    ],
   },
   listResponseSchema: { list },
   updateListResponseSchema: { lists: [list], completedCardIds: [] },
@@ -61,6 +66,13 @@ const responseSamples: Record<string, unknown> = {
     removedLabelIds: [],
   },
   cardAssigneesResponseSchema: { assigneeIds: [ID.user] },
+  cardViewersResponseSchema: { viewerIds: [ID.user] },
+  cardCoverUploadUrlResponseSchema: {
+    uploadUrl: 'https://bucket.exemplo/covers/x?X-Amz-Signature=abc',
+    objectKey: `covers/${ID.card}/abcdefghijklmnopqrstuvwxyz012345`,
+    expiresAt: T0,
+    headers: { 'content-type': 'image/png' },
+  },
   cardLabelsResponseSchema: { labelIds: [ID.label] },
   activitiesResponseSchema: { activities: [activity] },
   labelResponseSchema: { label },
@@ -149,6 +161,12 @@ describe('exemplos de requisição válidos (referência para MSW e backend)', (
     [shared.createLabelRequestSchema, { name: 'Etiqueta', color: 'gray' }],
     [shared.createChecklistRequestSchema, { title: 'Checklist' }],
     [shared.createCommentRequestSchema, { body: 'Oi' }],
+    [shared.updateCardVisibilityRequestSchema, { visibility: 'restricted' }],
+    [shared.cardCoverUploadUrlRequestSchema, { contentType: 'image/webp', sizeBytes: 1024 }],
+    [
+      shared.confirmCardCoverRequestSchema,
+      { objectKey: `covers/${ID.card}/abcdefghijklmnopqrstuvwxyz012345`, width: 800, height: 600 },
+    ],
   ];
 
   it.each(requests.map(([schema, body], index) => [index, schema, body] as const))(

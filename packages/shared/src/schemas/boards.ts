@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { cardSummarySchema } from './cards';
+import { boardCardSchema, cardSummarySchema, lockedCardSchema } from './cards';
 import { booleanQuerySchema, isoDateTimeSchema, textFieldSchema, uuidSchema } from './common';
 import { labelSchema } from './labels';
 import { listSchema } from './lists';
@@ -54,12 +54,13 @@ export const createBoardResponseSchema = z.object({
 /**
  * `GET /api/boards/:boardId` → 200 (payload do quadro).
  * `lists`: não arquivadas, por `position`. `cards`: não arquivados, de listas não
- * arquivadas, por `(listId, position)`. `labels`: por `name`.
+ * arquivadas, por `(listId, position)`; card restrito sem acesso entra como `LockedCard`
+ * (ADR 0015). `labels`: por `name`.
  */
 export const boardPayloadSchema = z.object({
   board: boardSchema,
   lists: z.array(listSchema),
-  cards: z.array(cardSummarySchema),
+  cards: z.array(boardCardSchema),
   labels: z.array(labelSchema),
 });
 
@@ -92,10 +93,19 @@ export const archivedCardSchema = cardSummarySchema.extend({
   listArchived: z.boolean(),
 });
 
+/**
+ * Item da lista de arquivados: união discriminada por `locked`. Card restrito sem acesso vira
+ * `LockedCard` — sem a lista de origem e sem nenhum outro campo (ADR 0015, scope §11 F4).
+ */
+export const boardArchivedCardSchema = z.discriminatedUnion('locked', [
+  archivedCardSchema,
+  lockedCardSchema,
+]);
+
 /** `GET /api/boards/:boardId/archived` → 200. Ambos por `archivedAt` desc. */
 export const boardArchivedResponseSchema = z.object({
   lists: z.array(listSchema),
-  cards: z.array(archivedCardSchema),
+  cards: z.array(boardArchivedCardSchema),
 });
 
 export type Board = z.infer<typeof boardSchema>;
@@ -112,4 +122,5 @@ export type UpdateBoardRequest = z.infer<typeof updateBoardRequestSchema>;
 export type BoardResponse = z.infer<typeof boardResponseSchema>;
 export type DeleteBoardRequest = z.infer<typeof deleteBoardRequestSchema>;
 export type ArchivedCard = z.infer<typeof archivedCardSchema>;
+export type BoardArchivedCard = z.infer<typeof boardArchivedCardSchema>;
 export type BoardArchivedResponse = z.infer<typeof boardArchivedResponseSchema>;
