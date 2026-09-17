@@ -26,6 +26,7 @@ import { buildLoggerOptions } from './logger';
 import { adminRoutes } from './modules/admin/routes';
 import { authRoutes } from './modules/auth/routes';
 import { boardRoutes } from './modules/boards/routes';
+import { cardRoutes } from './modules/cards/routes';
 import { healthRoutes } from './modules/health/routes';
 import { inviteRoutes } from './modules/invites/routes';
 import { listRoutes } from './modules/lists/routes';
@@ -130,6 +131,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   await app.register(adminRoutes, { appOrigin: env.APP_ORIGIN });
   await app.register(boardRoutes);
   await app.register(listRoutes);
+  await app.register(cardRoutes);
 
   return app;
 }

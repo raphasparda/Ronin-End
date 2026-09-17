@@ -1,6 +1,6 @@
 # Kanban: contrato da API REST (MVP)
 
-> Status: v1.5 (2026-09-17; v1.2 alinhou ao `scope.md` v2: sem gamificação, cor por lista, prioridade do card, reabrir para o topo; v1.3 adicionou `415 UNSUPPORTED_MEDIA_TYPE`; v1.4 (2026-09-17) fechou ambiguidades ao implementar os schemas das Fatias 2 a 9, ver §18; v1.5 registrou decisões do backend das Fatias 2 e 3, §18.1). Complementa `overview.md`. Os schemas Zod em `packages/shared/src/schemas/` são a fonte da verdade em código e devem refletir exatamente este documento. Mudança de contrato = atualizar este arquivo no mesmo PR.
+> Status: v1.6 (2026-09-17; v1.2 alinhou ao `scope.md` v2: sem gamificação, cor por lista, prioridade do card, reabrir para o topo; v1.3 adicionou `415 UNSUPPORTED_MEDIA_TYPE`; v1.4 (2026-09-17) fechou ambiguidades ao implementar os schemas das Fatias 2 a 9, ver §18; v1.5 registrou decisões do backend das Fatias 2 e 3, §18.1; v1.6 registrou decisões do backend da Fatia 4, §18.2). Complementa `overview.md`. Os schemas Zod em `packages/shared/src/schemas/` são a fonte da verdade em código e devem refletir exatamente este documento. Mudança de contrato = atualizar este arquivo no mesmo PR.
 
 ## 1. Convenções
 
@@ -476,3 +476,15 @@ Nenhuma muda schema; todas detalham comportamento que o documento deixava em abe
 15. **Listas**: `PATCH /api/lists/:listId` com `name`/`color` é aceito em lista arquivada (só `isDoneList: true` → `409 LIST_ARCHIVED`); `POST /api/lists/:listId/move` de lista arquivada → `409 LIST_ARCHIVED`. Toda mutação de lista (inclusive `archive`/`restore`) em quadro arquivado → `409 BOARD_ARCHIVED`.
 16. **`PATCH /api/lists/:listId { isDoneList: true }`** já conclui os cards abertos (tarefa 8.2 antecipada no `modules/completion`): só quando a lista **passa** a ser de conclusão; remarcar a mesma lista responde `completedCardIds: []`. `completedCardIds` vem ordenado por id.
 17. **Payload do quadro** (`GET /api/boards/:boardId`) já traz cards (com agregados, `labelIds`, `assigneeIds`) e `labels` reais, lidos num snapshot `REPEATABLE READ` somente leitura. Ordem de `assigneeIds`: por data de atribuição; de `labelIds`: por nome da etiqueta.
+
+### 18.2 Decisões fechadas na implementação do backend da Fatia 4 (v1.6)
+
+Nenhuma muda schema.
+
+18. **Ordem das checagens em `POST /api/cards/:cardId/move`**: 400 → 404 (card, depois lista destino) → `409 BOARD_ARCHIVED` (quadro do card, depois quadro destino) → `409 LIST_ARCHIVED` (lista destino) → `409 CONFLICT` (card arquivado) → `409 INVALID_PLACEMENT`. Em `POST /api/lists/:listId/cards`: 404 → `BOARD_ARCHIVED` → `LIST_ARCHIVED` → `LIST_IS_DONE_LIST`.
+19. **Ordem das atividades numa mesma ação**: `card_moved` antes de `card_completed`/`card_reopened`; `card_restored` antes de `card_completed`. O `created_at` é estritamente crescente por card (`greatest(now, último + 1 µs)`), então `GET /api/cards/:cardId/activity` (`created_at DESC`) respeita a ordem de gravação mesmo no mesmo milissegundo. `card_moved` entre quadros grava `board_id` do quadro destino.
+20. **`POST /api/cards/:cardId/restore`** de card não arquivado → 200 sem mudança, checado **antes** de `LIST_ARCHIVED` (`BOARD_ARCHIVED` vem antes de ambos). `archive`/`restore` em quadro arquivado → `409 BOARD_ARCHIVED` mesmo quando seriam no-op.
+21. **`PATCH /api/cards/:cardId`** é aceito em card arquivado (só quadro arquivado → 409). Campos iguais aos atuais não geram atividade nem alteram `updatedAt`.
+22. **`DELETE /api/cards/:cardId`**: 404 → 403 (Member) → `409 BOARD_ARCHIVED` (quadro arquivado é somente leitura, I10; a exceção de §3 vale só para excluir o **quadro**).
+23. **`removedLabelIds`** vem ordenado por id. Responsáveis permanecem no move entre quadros.
+24. **Locks das mutações de card**: quadros envolvidos `FOR SHARE` (por id) → listas envolvidas `FOR UPDATE` (por id) → card `FOR UPDATE`. Arquivar/excluir o quadro (`FOR UPDATE`) espera a ação terminar; cards do mesmo quadro só se serializam pelas listas. Se o card mudou de lista entre a leitura e o lock, a transação é refeita (até 5 vezes).

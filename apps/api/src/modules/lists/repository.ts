@@ -80,3 +80,17 @@ export async function clearDoneList(
     .set({ isDoneList: false, updatedAt: now })
     .where(and(eq(lists.boardId, boardId), eq(lists.isDoneList, true), ne(lists.id, exceptListId)));
 }
+
+/**
+ * Listas com lock de linha, em ordem de id (evita deadlock ao mover card entre listas, ADR 0004).
+ * O chamador bloqueia os quadros antes (ordem: quadro → lista → card).
+ */
+export async function lockListsByIds(db: DbExecutor, ids: string[]): Promise<ListRow[]> {
+  const unique = [...new Set(ids)].sort();
+  const rows: ListRow[] = [];
+  for (const id of unique) {
+    const row = await lockListById(db, id);
+    if (row) rows.push(row);
+  }
+  return rows;
+}

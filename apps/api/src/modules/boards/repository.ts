@@ -43,3 +43,18 @@ export async function deleteBoardById(db: DbExecutor, id: string): Promise<boole
   const rows = await db.delete(boards).where(eq(boards.id, id)).returning({ id: boards.id });
   return rows.length > 0;
 }
+
+/**
+ * Quadros com lock compartilhado (`FOR SHARE`), em ordem de id. Usado pelas mutações de cards:
+ * impede arquivar/excluir o quadro no meio da ação (esses pegam `FOR UPDATE`) sem serializar os
+ * cards do quadro entre si (a serialização de posição vem do lock das listas, ADR 0004).
+ */
+export async function lockBoardsShared(db: DbExecutor, ids: string[]): Promise<BoardRow[]> {
+  const unique = [...new Set(ids)].sort();
+  const rows: BoardRow[] = [];
+  for (const id of unique) {
+    const [row] = await db.select().from(boards).where(eq(boards.id, id)).limit(1).for('share');
+    if (row) rows.push(row);
+  }
+  return rows;
+}

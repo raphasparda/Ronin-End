@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNotNull, isNull, notExists, sql } from 'drizzle-orm';
 
 import type { DbExecutor } from '../../db/client';
 import {
@@ -11,6 +11,10 @@ import {
   labels,
   lists,
   type CardRow,
+  type ChecklistItemRow,
+  type ChecklistRow,
+  type CommentRow,
+  type NewCardRow,
 } from '../../db/schema';
 
 export type CardSummaryRow = Pick<
@@ -35,17 +39,24 @@ export type CardSummaryRow = Pick<
   listArchived: boolean;
 };
 
+/** Cards de um quadro (`active` ou `archived`) ou um card só (arquivado ou não). */
+export type CardSummaryScope =
+  { boardId: string; state: 'active' | 'archived' } | { cardId: string };
+
 /**
- * Cards de um quadro com os agregados da face (`checklist`, `commentCount`, `hasDescription`),
+ * Cards com os agregados da face (`checklist`, `commentCount`, `hasDescription`),
  * numa única consulta com subconsultas agrupadas (sem N+1, api.md §9).
- * - `active`: cards não arquivados de listas não arquivadas, por `(listId, position)`;
- * - `archived`: cards arquivados individualmente, por `archivedAt` desc.
+ * - quadro `active`: cards não arquivados de listas não arquivadas, por `(listId, position)`;
+ * - quadro `archived`: cards arquivados individualmente, por `archivedAt` desc;
+ * - card: a linha do card, em qualquer estado.
  */
 export async function findCardSummaryRows(
   db: DbExecutor,
-  boardId: string,
-  scope: 'active' | 'archived',
+  scope: CardSummaryScope,
 ): Promise<CardSummaryRow[]> {
+  const scopeFilter =
+    'cardId' in scope ? eq(cards.id, scope.cardId) : eq(cards.boardId, scope.boardId);
+
   const checklistAgg = db
     .select({
       cardId: checklists.cardId,
@@ -57,7 +68,7 @@ export async function findCardSummaryRows(
     .from(checklists)
     .innerJoin(cards, eq(cards.id, checklists.cardId))
     .innerJoin(checklistItems, eq(checklistItems.checklistId, checklists.id))
-    .where(eq(cards.boardId, boardId))
+    .where(scopeFilter)
     .groupBy(checklists.cardId)
     .as('checklist_agg');
 
@@ -68,7 +79,7 @@ export async function findCardSummaryRows(
     })
     .from(comments)
     .innerJoin(cards, eq(cards.id, comments.cardId))
-    .where(eq(cards.boardId, boardId))
+    .where(scopeFilter)
     .groupBy(comments.cardId)
     .as('comment_agg');
 
@@ -97,39 +108,148 @@ export async function findCardSummaryRows(
     .leftJoin(checklistAgg, eq(checklistAgg.cardId, cards.id))
     .leftJoin(commentAgg, eq(commentAgg.cardId, cards.id));
 
-  if (scope === 'active') {
+  if ('cardId' in scope) return query.where(scopeFilter).limit(1);
+  if (scope.state === 'active') {
     return query
-      .where(and(eq(cards.boardId, boardId), isNull(cards.archivedAt), isNull(lists.archivedAt)))
+      .where(and(scopeFilter, isNull(cards.archivedAt), isNull(lists.archivedAt)))
       .orderBy(asc(cards.listId), asc(cards.position));
   }
   return query
-    .where(and(eq(cards.boardId, boardId), isNotNull(cards.archivedAt)))
+    .where(and(scopeFilter, isNotNull(cards.archivedAt)))
     .orderBy(desc(cards.archivedAt), asc(cards.id));
 }
 
-/** `(cardId, labelId)` das etiquetas aplicadas em cards do quadro, por nome da etiqueta. */
-export async function findBoardCardLabelPairs(
+function pairsFilter(scope: CardSummaryScope) {
+  return 'cardId' in scope ? eq(cards.id, scope.cardId) : eq(cards.boardId, scope.boardId);
+}
+
+/** `(cardId, labelId)` das etiquetas aplicadas (cards do quadro ou um card), por nome da etiqueta. */
+export async function findCardLabelPairs(
   db: DbExecutor,
-  boardId: string,
+  scope: CardSummaryScope,
 ): Promise<{ cardId: string; labelId: string }[]> {
   return db
     .select({ cardId: cardLabels.cardId, labelId: cardLabels.labelId })
     .from(cardLabels)
     .innerJoin(cards, eq(cards.id, cardLabels.cardId))
     .innerJoin(labels, eq(labels.id, cardLabels.labelId))
-    .where(eq(cards.boardId, boardId))
+    .where(pairsFilter(scope))
     .orderBy(asc(labels.name), asc(labels.id));
 }
 
-/** `(cardId, userId)` dos responsáveis de cards do quadro, por ordem de atribuição. */
-export async function findBoardCardAssigneePairs(
+/** `(cardId, userId)` dos responsáveis (cards do quadro ou um card), por ordem de atribuição. */
+export async function findCardAssigneePairs(
   db: DbExecutor,
-  boardId: string,
+  scope: CardSummaryScope,
 ): Promise<{ cardId: string; userId: string }[]> {
   return db
     .select({ cardId: cardAssignees.cardId, userId: cardAssignees.userId })
     .from(cardAssignees)
     .innerJoin(cards, eq(cards.id, cardAssignees.cardId))
-    .where(eq(cards.boardId, boardId))
+    .where(pairsFilter(scope))
     .orderBy(asc(cardAssignees.createdAt), asc(cardAssignees.userId));
+}
+
+export async function findCardById(db: DbExecutor, id: string): Promise<CardRow | undefined> {
+  const [row] = await db.select().from(cards).where(eq(cards.id, id)).limit(1);
+  return row;
+}
+
+/** Card com lock de linha (I8). Ordem de locks: quadro(s) → lista(s) → card. */
+export async function lockCardById(db: DbExecutor, id: string): Promise<CardRow | undefined> {
+  const [row] = await db.select().from(cards).where(eq(cards.id, id)).limit(1).for('update');
+  return row;
+}
+
+export async function insertCardRow(db: DbExecutor, values: NewCardRow): Promise<CardRow> {
+  const [row] = await db.insert(cards).values(values).returning();
+  if (!row) throw new Error('insert em cards não retornou linha');
+  return row;
+}
+
+/**
+ * Atualiza campos do card que não são de conclusão (esses só em `modules/completion`).
+ * Mover entre quadros grava `listId` e `boardId` juntos (FK composta `cards_list_board_fk`).
+ */
+export async function updateCardById(
+  db: DbExecutor,
+  id: string,
+  values: Partial<
+    Pick<
+      NewCardRow,
+      | 'title'
+      | 'description'
+      | 'dueAt'
+      | 'dueHasTime'
+      | 'priority'
+      | 'listId'
+      | 'boardId'
+      | 'position'
+      | 'archivedAt'
+      | 'updatedAt'
+    >
+  >,
+): Promise<CardRow> {
+  const [row] = await db.update(cards).set(values).where(eq(cards.id, id)).returning();
+  if (!row) throw new Error('update em cards não retornou linha');
+  return row;
+}
+
+export async function deleteCardById(db: DbExecutor, id: string): Promise<void> {
+  await db.delete(cards).where(eq(cards.id, id));
+}
+
+/**
+ * Remove do card as etiquetas que não pertencem a `boardId` (mover entre quadros).
+ * @returns ids das etiquetas removidas, ordenados.
+ */
+export async function deleteForeignCardLabels(
+  db: DbExecutor,
+  cardId: string,
+  boardId: string,
+): Promise<string[]> {
+  const rows = await db
+    .delete(cardLabels)
+    .where(
+      and(
+        eq(cardLabels.cardId, cardId),
+        notExists(
+          db
+            .select({ id: labels.id })
+            .from(labels)
+            .where(and(eq(labels.id, cardLabels.labelId), eq(labels.boardId, boardId))),
+        ),
+      ),
+    )
+    .returning({ labelId: cardLabels.labelId });
+  return rows.map((row) => row.labelId).sort();
+}
+
+/** Checklists do card (ordem de criação) e seus itens (por `position`). */
+export async function findCardChecklists(
+  db: DbExecutor,
+  cardId: string,
+): Promise<{ checklists: ChecklistRow[]; items: ChecklistItemRow[] }> {
+  const checklistRows = await db
+    .select()
+    .from(checklists)
+    .where(eq(checklists.cardId, cardId))
+    .orderBy(asc(checklists.createdAt), asc(checklists.id));
+  if (checklistRows.length === 0) return { checklists: [], items: [] };
+  const items = await db
+    .select({ item: checklistItems })
+    .from(checklistItems)
+    .innerJoin(checklists, eq(checklists.id, checklistItems.checklistId))
+    .where(eq(checklists.cardId, cardId))
+    .orderBy(asc(checklistItems.position), asc(checklistItems.id));
+  return { checklists: checklistRows, items: items.map((row) => row.item) };
+}
+
+/** Comentários do card em ordem cronológica crescente. */
+export async function findCardComments(db: DbExecutor, cardId: string): Promise<CommentRow[]> {
+  return db
+    .select()
+    .from(comments)
+    .where(eq(comments.cardId, cardId))
+    .orderBy(asc(comments.createdAt), asc(comments.id));
 }
