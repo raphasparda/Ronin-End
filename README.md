@@ -185,8 +185,9 @@ Rode na raiz do repositório.
 | `pnpm lint` / `pnpm lint:fix`       | ESLint                                                                     |
 | `pnpm typecheck`                    | TypeScript da API e do shared                                              |
 | `pnpm format` / `pnpm format:check` | Prettier                                                                   |
-| `pnpm build`                        | `dist/` do shared (ESM + `.d.ts`) e `dist/server.js` da API                |
+| `pnpm build`                        | `dist/` do shared (ESM + `.d.ts`), `dist/server.js` e `dist/migrate.js`    |
 | `pnpm start`                        | roda o build da API                                                        |
+| `pnpm start:prod`                   | produção: aplica as migrations (`dist/migrate.js`) e sobe a API            |
 | `pnpm shared:pack`                  | gera o tarball publicável do `@raphasparda/ronin-shared`                   |
 
 ## Testes

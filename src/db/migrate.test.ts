@@ -1,10 +1,41 @@
-import { readdirSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 
-import { afterAll, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 
 import { closeTestDb, describeDb, getTestPool, testDatabaseUrl } from '../../test/db';
 
-import { MIGRATIONS_DIR, runMigrations } from './migrate';
+import { MIGRATIONS_DIR, resolveMigrationsDir, runMigrations } from './migrate';
+
+describe('resolveMigrationsDir', () => {
+  const repo = resolve('/srv/ronin-api');
+  const cwd = resolve('/srv/app');
+
+  it('pela fonte (src/db): drizzle/ na raiz do repositório', () => {
+    expect(resolveMigrationsDir({ moduleDir: join(repo, 'src', 'db'), cwd })).toBe(
+      join(repo, 'drizzle'),
+    );
+  });
+
+  it('pelo build (dist): <cwd>/drizzle', () => {
+    expect(resolveMigrationsDir({ moduleDir: join(repo, 'dist'), cwd })).toBe(join(cwd, 'drizzle'));
+  });
+
+  it('MIGRATIONS_DIR tem prioridade e é relativa ao cwd', () => {
+    const moduleDir = join(repo, 'dist');
+    expect(resolveMigrationsDir({ override: 'sql/migrations', moduleDir, cwd })).toBe(
+      join(cwd, 'sql', 'migrations'),
+    );
+    expect(resolveMigrationsDir({ override: resolve('/opt/drizzle'), moduleDir, cwd })).toBe(
+      resolve('/opt/drizzle'),
+    );
+    expect(resolveMigrationsDir({ override: '  ', moduleDir, cwd })).toBe(join(cwd, 'drizzle'));
+  });
+
+  it('o padrão desta execução aponta para a pasta commitada', () => {
+    expect(existsSync(join(MIGRATIONS_DIR, 'meta', '_journal.json'))).toBe(true);
+  });
+});
 
 describeDb('runMigrations', () => {
   afterAll(async () => {

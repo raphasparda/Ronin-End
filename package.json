@@ -11,6 +11,7 @@
     "dev": "node scripts/dev.mjs",
     "dev:api": "tsx watch --clear-screen=false src/server.ts",
     "start": "node --enable-source-maps dist/server.js",
+    "start:prod": "node dist/migrate.js && node --enable-source-maps dist/server.js",
     "build": "pnpm --filter @raphasparda/ronin-shared run build && tsup",
     "typecheck": "tsc --noEmit && pnpm --filter @raphasparda/ronin-shared run typecheck",
     "test": "pnpm --filter @raphasparda/ronin-shared run test && vitest run",

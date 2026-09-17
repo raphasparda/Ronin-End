@@ -5,7 +5,7 @@
 > v1.3: CSP restrita na API e `no-store` em toda resposta (§6.7); `text/plain` recusado com `415 UNSUPPORTED_MEDIA_TYPE` (§6.3).
 > v1.4: §5 implementado para as fatias 2–9 (migrations `0001`–`0007`): FK composta de I6, `CHECK`s extras, trigger append-only da atividade e índices de FK para cascatas (§5.1.1).
 > v1.5: revisão de segurança: reserva atômica de tentativa no login e na troca de senha e limites de rota (§6.4), revogação dos tokens de quem perde o papel (§6.5), logs de erro de banco sem valores (§6.7), configuração fail-closed `NODE_ENV` × `APP_ORIGIN` e requisitos do deploy (§3, §6.8). Detalhes em `api.md` §18.5.
-> v1.6: setup inicial protegido por `SETUP_TOKEN`, obrigatório em produção (§3, §6.8); `TRUST_PROXY` aceita número de saltos e lista de IPs/CIDRs (§3, §6.8).
+> v1.6: setup inicial protegido por `SETUP_TOKEN`, obrigatório em produção (§3, §6.8); `TRUST_PROXY` aceita número de saltos e lista de IPs/CIDRs (§3, §6.8); `dist/migrate.js` aplica as migrations sem `tsx` e `pnpm start:prod` roda migrations + servidor (§3, §10).
 > Fonte de requisitos: `docs/product/scope.md` (inclui "Decisões confirmadas pelo cliente").
 > Documentos irmãos: `api.md` (contrato REST), `plan.md` (plano de implementação), `adr/` (decisões).
 
@@ -185,7 +185,8 @@ Scripts de raiz (contrato comum a todo o projeto):
 | `pnpm db:migrate` | aplica migrations no `DATABASE_URL` |
 | `pnpm lint` / `pnpm typecheck` / `pnpm test` | em todos os pacotes |
 | `pnpm test:e2e` | Playwright (ronin-web) |
-| `pnpm build` | build de `web` (estático) e `api` (tsup) |
+| `pnpm build` | build de `web` (estático) e `api` (tsup: `dist/server.js` e `dist/migrate.js`) |
+| `pnpm start` / `pnpm start:prod` | ronin-api: só o servidor do build / `node dist/migrate.js && node --enable-source-maps dist/server.js` (produção) |
 
 Variáveis de ambiente (`.env.example`):
 
@@ -193,7 +194,8 @@ Variáveis de ambiente (`.env.example`):
 |----------|-------------|-------|
 | `DATABASE_URL` | `postgres://kanban:kanban@127.0.0.1:5433/kanban` | banco local do `pnpm dev`; nativo usa 5432 |
 | `TEST_DATABASE_URL` | `postgres://kanban:kanban@127.0.0.1:5433/kanban_test` | usado pelo Vitest da API; o globalSetup sobe o banco local se não responder e aplica as migrations |
-| `DATABASE_POOL_MAX` | `10` | conexões máximas do pool `pg` da API (1–100, padrão 10) |
+| `DATABASE_POOL_MAX` | `10` | conexões máximas do pool `pg` da API (1–100, padrão 10). No Neon free, sugerido `5` |
+| `MIGRATIONS_DIR` | (vazio) | pasta das migrations para `pnpm db:migrate` e `node dist/migrate.js`. Padrão: `drizzle/` da raiz do repositório rodando pela fonte; `<cwd>/drizzle` rodando do build |
 | `POSTGRES_PORT` | `5433` | porta do host no docker-compose (alternativa Docker) |
 | `PORT` | `3000` | API |
 | `HOST` | `127.0.0.1` | interface de escuta da API (padrão `127.0.0.1`; no container de produção use `0.0.0.0`) |
@@ -763,7 +765,7 @@ Envelope único (schema `errorResponseSchema` no shared):
 
 - `GET /api/health` → `{ status: "ok", db: "ok" }` (faz `SELECT 1`; 503 se falhar).
 - Logs JSON do pino para stdout (Docker coleta).
-- Migrations: `drizzle-kit generate` gera SQL em `drizzle/` (commitado; revisar o SQL antes). Em produção, o container da API roda `node dist/migrate.js && node dist/server.js`.
+- Migrations: `drizzle-kit generate` gera SQL em `drizzle/` (commitado; revisar o SQL antes). Em produção, `pnpm start:prod` roda `node dist/migrate.js && node --enable-source-maps dist/server.js`: o tsup gera `dist/migrate.js` a partir de `src/db/migrate.ts` (sem `tsx` em runtime), que lê `drizzle/` do diretório atual (ou `MIGRATIONS_DIR`) e serializa execuções concorrentes com advisory lock. Se a migration falhar, o servidor não sobe.
 - Deploy (ADR 0009): VPS Linux de entrada (1–2 vCPU, 2 GB RAM) com Docker Engine + Compose plugin. `infra/docker-compose.prod.yml` com `postgres`, `api`, `caddy`, `backup`. Domínio próprio, HTTPS automático (Let's Encrypt via Caddy), HTTP redireciona para HTTPS.
 - Rede: só o Caddy publica portas (80/443). **O Postgres não tem `ports:`** (acessível só na rede interna do compose). Firewall do host (UFW) liberando apenas 22, 80 e 443; SSH só por chave. Documentar que o Docker ignora o UFW para portas publicadas, por isso o banco nunca publica porta.
 - Reboot: serviço `docker` habilitado no systemd; todos os containers com `restart: unless-stopped`; `api` com `depends_on: { postgres: { condition: service_healthy } }`. Teste de aceite: `sudo reboot` e `/api/health` responde sem intervenção.
