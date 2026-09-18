@@ -23,7 +23,7 @@ import {
 } from '../test-fixtures';
 
 const session = {
-  user: { id: ID.user, name: 'Ana', email: 'ana@exemplo.com', role: 'admin' },
+  user: { id: ID.user, name: 'Ana', email: 'ana@exemplo.com', role: 'admin', avatarUpdatedAt: T0 },
   workspace: { name: 'Equipe', timezone: 'America/Sao_Paulo' },
   features: { boardCovers: true },
 };
@@ -106,6 +106,8 @@ describe('contratos serializáveis pela API', () => {
       'loginResponseSchema',
       'meResponseSchema',
       'acceptInviteResponseSchema',
+      // Mesmo corpo de updateMeResponseSchema.
+      'updateAvatarResponseSchema',
     ]);
     const missing = responses.filter((name) => !(name in responseSamples) && !aliases.has(name));
     expect(missing).toEqual([]);

@@ -10,6 +10,7 @@ import {
   scrubAuthTokensOfUser,
 } from '../auth-tokens/repository';
 import { emailThrottleKey } from '../auth/throttle';
+import { deleteAvatar } from '../avatars/repository';
 import { deleteBoardViewersOfUser } from '../boards/repository';
 import { deleteNotificationsOfUser } from '../notifications/repository';
 import { deleteUserSessions } from '../sessions/service';
@@ -37,6 +38,7 @@ export function toUserSummary(row: UserRow): UserSummary {
     role: row.role,
     status: row.status,
     anonymized: row.anonymizedAt !== null,
+    avatarUpdatedAt: row.avatarUpdatedAt === null ? null : toIso(row.avatarUpdatedAt),
   };
 }
 
@@ -162,7 +164,8 @@ export async function reactivateUser(
  * (`USER_NOT_DEACTIVATED`). `LAST_ADMIN` não se aplica: o alvo já está desativado, então não conta
  * como Admin ativo. Irreversível. Na mesma transação:
  * - nome "Usuário removido", e-mail e hash nulos, `anonymized_at`;
- * - apaga sessões, links de redefinição do usuário, notificações recebidas e o throttle do e-mail;
+ * - apaga sessões, a foto de perfil, links de redefinição do usuário, notificações recebidas e o
+ *   throttle do e-mail;
  * - revoga convites e redefinições pendentes que ele criou (api.md §18.5);
  * - tira o e-mail dos convites ligados a ele (revogando algum ainda pendente).
  * Cards, responsáveis, comentários, atividades e notificações que ele gerou para outros permanecem
@@ -188,6 +191,7 @@ export async function anonymizeUser(
     const updated = await anonymizeUserRow(tx, target.id, ctx.now);
     if (!updated) throw new AppError('NOT_FOUND', USER_NOT_FOUND_MESSAGE);
     await deleteUserSessions(tx, target.id);
+    await deleteAvatar(tx, target.id);
     await revokePendingTokensCreatedBy(tx, target.id, ctx.now);
     await scrubAuthTokensOfUser(tx, target, ctx.now);
     await deleteNotificationsOfUser(tx, target.id);

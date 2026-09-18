@@ -17,6 +17,8 @@ export const userSummarySchema = z.object({
   role: roleSchema,
   status: userStatusSchema,
   anonymized: z.boolean(),
+  /** Quando a foto foi enviada; `null` sem foto. Versiona a URL do avatar (api.md §7). */
+  avatarUpdatedAt: isoDateTimeSchema.nullable(),
 });
 
 /** Usuário na administração (api.md §8): inclui e-mail (nulo se anonimizado) e criação. */

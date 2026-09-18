@@ -28,6 +28,7 @@ import type { R2Client } from './lib/r2';
 import { buildLoggerOptions } from './logger';
 import { adminRoutes } from './modules/admin/routes';
 import { authRoutes } from './modules/auth/routes';
+import { avatarRoutes } from './modules/avatars/routes';
 import { boardRoutes } from './modules/boards/routes';
 import { cardRoutes } from './modules/cards/routes';
 import { checklistRoutes } from './modules/checklists/routes';
@@ -87,6 +88,8 @@ declare module 'fastify' {
   interface FastifyContextConfig {
     /** Rota acessível sem sessão (overview.md §6.2). */
     public?: boolean;
+    /** `Cache-Control` da rota, no lugar do `no-store` global (só respostas sem dado sensível). */
+    cacheControl?: string;
   }
 }
 
@@ -170,6 +173,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   await app.register(passwordResetRoutes);
   await app.register(meRoutes);
   await app.register(userRoutes);
+  await app.register(avatarRoutes);
   await app.register(adminRoutes, { appOrigin: env.APP_ORIGIN });
   await app.register(boardRoutes);
   await app.register(listRoutes);

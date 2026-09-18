@@ -176,6 +176,7 @@ describeDb('POST /api/admin/users/:userId/anonymize (kanban_test)', () => {
       role: 'member',
       status: 'deactivated',
       anonymized: true,
+      avatarUpdatedAt: null,
       email: null,
       createdAt: zeca.user.createdAt.toISOString(),
     });
@@ -217,6 +218,7 @@ describeDb('POST /api/admin/users/:userId/anonymize (kanban_test)', () => {
       role: 'member',
       status: 'deactivated',
       anonymized: true,
+      avatarUpdatedAt: null,
     });
     const detail = cardDetailResponseSchema.parse(
       (

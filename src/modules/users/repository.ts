@@ -61,7 +61,13 @@ export async function updateUserById(
   values: Partial<
     Pick<
       NewUserRow,
-      'name' | 'role' | 'status' | 'passwordHash' | 'passwordChangedAt' | 'updatedAt'
+      | 'name'
+      | 'role'
+      | 'status'
+      | 'passwordHash'
+      | 'passwordChangedAt'
+      | 'avatarUpdatedAt'
+      | 'updatedAt'
     >
   >,
 ): Promise<UserRow | undefined> {
@@ -108,6 +114,7 @@ export async function anonymizeUserRow(
       name: ANONYMIZED_USER_NAME,
       email: null,
       passwordHash: null,
+      avatarUpdatedAt: null,
       anonymizedAt: now,
       updatedAt: now,
     })

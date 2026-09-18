@@ -5,7 +5,10 @@ import { sessions, users, type SessionRow, type UserRow } from '../../db/schema'
 
 export interface SessionWithUser {
   session: SessionRow;
-  user: Pick<UserRow, 'id' | 'name' | 'email' | 'role' | 'status' | 'anonymizedAt'>;
+  user: Pick<
+    UserRow,
+    'id' | 'name' | 'email' | 'role' | 'status' | 'anonymizedAt' | 'avatarUpdatedAt'
+  >;
 }
 
 export async function insertSession(
@@ -30,6 +33,7 @@ export async function findSessionWithUser(
         role: users.role,
         status: users.status,
         anonymizedAt: users.anonymizedAt,
+        avatarUpdatedAt: users.avatarUpdatedAt,
       },
     })
     .from(sessions)

@@ -3,7 +3,7 @@ import type { AuthSessionResponse, LoginRequest } from '@raphasparda/ronin-share
 import type { Database } from '../../db/client';
 import { AppError } from '../../lib/app-error';
 import type { PasswordHasher } from '../../lib/password';
-import { createSession, deleteSession } from '../sessions/service';
+import { createSession, deleteSession, toSessionUser } from '../sessions/service';
 import { findUserByEmail, hasAnyUser } from '../users/repository';
 import { getWorkspace } from '../workspace/service';
 
@@ -95,7 +95,7 @@ export async function login(
     throw new AppError('INVALID_CREDENTIALS', INVALID_CREDENTIALS_MESSAGE);
   }
 
-  const sessionUser = { id: user.id, name: user.name, email: user.email, role: user.role };
+  const sessionUser = toSessionUser(user, user.email);
 
   return db.transaction(async (tx) => {
     await resetThrottle(tx, emailKey);

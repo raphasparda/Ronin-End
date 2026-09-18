@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm';
 import { check, pgEnum, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 
-import { createdAt, updatedAt } from '../types';
+import { bytea, createdAt, updatedAt } from '../types';
 
 export const userRole = pgEnum('user_role', ['admin', 'member']);
 export const userStatus = pgEnum('user_status', ['active', 'deactivated']);
@@ -26,6 +26,12 @@ export const users = pgTable(
     passwordChangedAt: timestamp('password_changed_at', { withTimezone: true, mode: 'date' })
       .notNull()
       .defaultNow(),
+    /**
+     * Espelho de `user_avatars.updated_at` (null sem foto), gravado na mesma transação. Existe
+     * para que todo caminho que já lê `users` (sessão, `GET /api/users`, administração) saiba a
+     * versão da foto sem carregar os bytes nem fazer join.
+     */
+    avatarUpdatedAt: timestamp('avatar_updated_at', { withTimezone: true, mode: 'date' }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -53,3 +59,30 @@ export const users = pgTable(
 
 export type UserRow = typeof users.$inferSelect;
 export type NewUserRow = typeof users.$inferInsert;
+
+/**
+ * Foto de perfil, uma por usuário (api.md §6). Fica fora de `users` porque os bytes só interessam
+ * a `GET /api/users/:userId/avatar`: qualquer `SELECT * FROM users` continua barato.
+ * `ON DELETE CASCADE` cobre o quadro em que a linha do usuário sumir; anonimizar apaga aqui.
+ */
+export const userAvatars = pgTable(
+  'user_avatars',
+  {
+    userId: uuid('user_id')
+      .primaryKey()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    contentType: text('content_type').notNull(),
+    bytes: bytea('bytes').notNull(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    check(
+      'user_avatars_content_type_check',
+      sql`${t.contentType} IN ('image/webp', 'image/jpeg', 'image/png')`,
+    ),
+    // Mesmo teto de AVATAR_MAX_BYTES (128 KB).
+    check('user_avatars_bytes_length_check', sql`octet_length(${t.bytes}) BETWEEN 1 AND 131072`),
+  ],
+);
+
+export type UserAvatarRow = typeof userAvatars.$inferSelect;

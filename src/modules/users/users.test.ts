@@ -83,6 +83,7 @@ describeDb('usuários e administração (kanban_test)', () => {
       ]);
       expect(Object.keys(body.users[0] ?? {}).sort()).toEqual([
         'anonymized',
+        'avatarUpdatedAt',
         'id',
         'name',
         'role',

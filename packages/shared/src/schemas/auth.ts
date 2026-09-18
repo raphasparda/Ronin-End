@@ -25,6 +25,8 @@ export const sessionUserSchema = z.object({
   name: z.string(),
   email: z.string(),
   role: roleSchema,
+  /** Quando a foto foi enviada; `null` sem foto. Versiona a URL do avatar (api.md §7). */
+  avatarUpdatedAt: isoDateTimeSchema.nullable(),
 });
 
 export const workspaceSchema = z.object({

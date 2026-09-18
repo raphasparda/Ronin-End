@@ -349,9 +349,18 @@ Enums: `user_role ('admin','member')`, `user_status ('active','deactivated')`, `
 | status | user_status not null | default `active` |
 | anonymized_at | timestamptz null | |
 | password_changed_at | timestamptz not null | default now() |
+| avatar_updated_at | timestamptz null | espelho de `user_avatars.updated_at` (null sem foto), gravado na mesma transação; versiona a URL do avatar sem carregar os bytes |
 | created_at, updated_at | timestamptz not null | default now() (`updated_at` também atualizado pelo Drizzle) |
 
-`CHECK`s de ciclo de vida: `users_credentials_present_check` (não anonimizado ⇒ `email` e `password_hash` presentes) e `users_anonymized_check` (anonimizado ⇒ `email` e `password_hash` nulos e `status = 'deactivated'`; impede reativar). Dados pessoais (LGPD): `email`, `name`, `password_hash`.
+`CHECK`s de ciclo de vida: `users_credentials_present_check` (não anonimizado ⇒ `email` e `password_hash` presentes) e `users_anonymized_check` (anonimizado ⇒ `email` e `password_hash` nulos e `status = 'deactivated'`; impede reativar). Dados pessoais (LGPD): `email`, `name`, `password_hash` e a foto em `user_avatars`.
+
+**user_avatars** (foto de perfil, api.md §18.10)
+| coluna | tipo | regra |
+|--------|------|-------|
+| user_id | uuid PK FK users | `ON DELETE CASCADE` |
+| content_type | text not null | `CHECK` em `image/webp`, `image/jpeg`, `image/png` |
+| bytes | bytea not null | `CHECK octet_length` 1–131072 (128 KB) |
+| updated_at | timestamptz not null | default now() |
 
 **sessions**
 | coluna | tipo | regra |
@@ -485,6 +494,7 @@ Schema Drizzle em `src/db/schema/` (`workspace.ts`, `users.ts`, `auth.ts`, `boar
 | `0007_notifications` | 7.2 | enum `notification_type`; `notifications` |
 | `0008_card_visibility_and_covers` | 11.2 | enum `card_visibility`; `cards.visibility` (`not null default 'team'`); `card_viewers`; `card_covers`; novos valores de `activity_type` (**revertida pela `0009`**) |
 | `0009_board_visibility_and_covers` | 11.2 (refeita) | enum `board_visibility`; `boards.visibility` (`not null default 'team'`); `board_viewers`; `board_covers`; derruba `card_viewers`, `card_covers`, `cards.visibility` e os cinco valores de `activity_type` da `0008` |
+| `0010_user_avatars` | foto de perfil | `user_avatars`; `users.avatar_updated_at` |
 
 As fatias 8 e 9 não têm migration: a conclusão usa as colunas de 4.2 e "Meus cards" usa `card_assignees_user_id_idx`.
 
@@ -714,7 +724,7 @@ Infra: `db/client.ts` (`createPool` com `max` = `DATABASE_POOL_MAX`, `createDb` 
 | Excluir quadro (Admin) | `DELETE boards` → cascata em listas, cards, etiquetas, checklists, comentários, atividades, notificações, **lista de acesso (`board_viewers`) e capa (`board_covers`)**. A imagem da capa é apagada do R2 depois do commit (falha vira log + órfão para a limpeza). |
 | Excluir card (Admin) | cascata do card (responsáveis, etiquetas, checklists, comentários, atividades, notificações). O card não tem capa própria (Fatia 11 refeita). |
 | Desativar usuário | `status='deactivated'`; apaga sessões; revoga redefinições pendentes. Atribuições permanecem. |
-| Anonimizar (só desativado) | `name='Usuário removido'`, `email=NULL`, `password_hash=NULL`, `anonymized_at=now()`; apaga sessões, tokens alvo, notificações recebidas, linhas de `board_viewers` (RN38) e o throttle do e-mail; tira o e-mail dos convites ligados a ele. Cards, comentários e atividades permanecem, exibindo "Usuário removido". Irreversível; não pode reativar (LGPD). |
+| Anonimizar (só desativado) | `name='Usuário removido'`, `email=NULL`, `password_hash=NULL`, `anonymized_at=now()`; apaga sessões, a foto de perfil, tokens alvo, notificações recebidas, linhas de `board_viewers` (RN38) e o throttle do e-mail; tira o e-mail dos convites ligados a ele. Cards, comentários e atividades permanecem, exibindo "Usuário removido". Irreversível; não pode reativar (LGPD). |
 | Manutenção diária (`plugins/maintenance.ts`, a cada 24h e no boot; ligada por padrão só em produção, api.md §18.4 item 40) | apaga notificações lidas há > 90 dias (RN19), sessões expiradas, `auth_throttle` sem lock e com janela > 1h, `auth_tokens` expirados/usados/revogados há > 30 dias (e criados há > 30 dias). **Com R2 configurado**, varre o prefixo `covers/` e apaga objetos sem linha em `board_covers` e com mais de 24 h (uploads iniciados e nunca confirmados, capas cuja exclusão falhou e os restos das antigas capas de card, anteriores à migration `0009`). Erro de rede no R2 não interrompe as demais limpezas. |
 
 ### 5.3 Atividade (C12)

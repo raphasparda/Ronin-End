@@ -79,3 +79,24 @@ export function isBoardCoverKey(objectKey: string, boardId: string): boolean {
   if (!objectKey.startsWith(prefix)) return false;
   return BOARD_COVER_KEY_RANDOM.test(objectKey.slice(prefix.length));
 }
+
+// ---------------------------------------------------------------------------
+// Foto de perfil (api.md §6)
+// ---------------------------------------------------------------------------
+
+/** Lado do quadrado gerado pelo front antes de enviar (o recorte é central). */
+export const AVATAR_SIZE_PX = 256;
+
+/** Teto da imagem já processada. Cabe com folga no limite de corpo da API (256 KB). */
+export const AVATAR_MAX_BYTES = 128 * 1024;
+
+/** Comprimento máximo do base64 de `AVATAR_MAX_BYTES` (com padding). */
+export const AVATAR_MAX_BASE64_LENGTH = Math.ceil(AVATAR_MAX_BYTES / 3) * 4;
+
+/** Tipos aceitos em `PUT /api/me/avatar`. O front sempre envia WebP. */
+export const AVATAR_CONTENT_TYPES = ['image/webp', 'image/jpeg', 'image/png'] as const;
+
+export type AvatarContentType = (typeof AVATAR_CONTENT_TYPES)[number];
+
+/** Extensões oferecidas no seletor de arquivo (o servidor valida pelo `contentType`). */
+export const AVATAR_ACCEPT = 'image/png,image/jpeg,image/webp';

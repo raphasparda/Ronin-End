@@ -32,6 +32,7 @@ function found(overrides: {
       role: 'member',
       status: 'active',
       anonymizedAt: null,
+      avatarUpdatedAt: null,
       ...overrides.user,
     },
   };
@@ -53,6 +54,7 @@ describe('checkSession', () => {
         name: 'Ana',
         email: 'ana@exemplo.com',
         role: 'member',
+        avatarUpdatedAt: null,
       },
     });
   });

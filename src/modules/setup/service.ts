@@ -10,7 +10,7 @@ import { sql } from 'drizzle-orm';
 import type { Database } from '../../db/client';
 import { AppError } from '../../lib/app-error';
 import type { PasswordHasher } from '../../lib/password';
-import { createSession } from '../sessions/service';
+import { createSession, toSessionUser } from '../sessions/service';
 import { hasAnyUser, insertUser } from '../users/repository';
 import { upsertWorkspace } from '../workspace/repository';
 
@@ -96,7 +96,7 @@ export async function performSetup(
 
     return {
       token,
-      user: { id: user.id, name: user.name, email: input.email, role: user.role },
+      user: toSessionUser(user, input.email),
       workspace: { name: ws.name, timezone: ws.timezone },
     };
   });

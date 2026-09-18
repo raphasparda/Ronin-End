@@ -45,7 +45,13 @@ describeDb('rotas /api/me (kanban_test)', () => {
       const res = await patchMe({ name: '  Beto Novo  ' });
       expect(res.statusCode).toBe(200);
       expect(updateMeResponseSchema.strict().parse(res.json())).toEqual({
-        user: { id: member.user.id, name: 'Beto Novo', email: member.user.email, role: 'member' },
+        user: {
+          id: member.user.id,
+          name: 'Beto Novo',
+          email: member.user.email,
+          role: 'member',
+          avatarUpdatedAt: null,
+        },
       });
       const [row] = await db().select().from(users).where(eq(users.id, member.user.id));
       expect(row?.name).toBe('Beto Novo');

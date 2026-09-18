@@ -8,6 +8,10 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/). O
 
 Entrega das Fatias 0 a 9 do MVP, na branch `feat/mvp-fatias-2-9`. A Fatia 10 (produção em VPS, backup e revisão final) ainda está pendente: veja [`docs/ops/known-issues.md`](docs/ops/known-issues.md).
 
+### Foto de perfil (backend)
+
+- `PUT /api/me/avatar` (imagem em base64, até 128 KB depois de decodificar), `DELETE /api/me/avatar` e `GET /api/users/:userId/avatar` (imagem, com `ETag` e cache privado de um dia). Os bytes ficam na tabela `user_avatars` e a versão (`users.avatar_updated_at`) volta em `SessionUser` e `UserSummary`, versionando a URL do avatar. Anonimizar a conta apaga a foto. Migration `0010_user_avatars`; decisões em [`api.md` §18.10](docs/architecture/api.md).
+
 ### Fatia 11: quadros restritos e capa do quadro (backend)
 
 > **Correção de alvo (2026-09-17).** A primeira versão desta fatia entregou capa e restrição no

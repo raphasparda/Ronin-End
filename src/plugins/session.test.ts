@@ -77,7 +77,13 @@ describeDb('plugins/session (kanban_test)', () => {
     const ok = await me(a, cookie);
     expect(ok.statusCode).toBe(200);
     expect(ok.json()).toEqual({
-      user: { id: user.id, name: 'Ana', email: 'ana@exemplo.com', role: 'admin' },
+      user: {
+        id: user.id,
+        name: 'Ana',
+        email: 'ana@exemplo.com',
+        role: 'admin',
+        avatarUpdatedAt: null,
+      },
       workspace: { name: 'Ronin', timezone: 'America/Sao_Paulo' },
       features: { boardCovers: false },
     });

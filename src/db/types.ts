@@ -21,3 +21,10 @@ export const updatedAt = () =>
     .notNull()
     .defaultNow()
     .$onUpdate(() => new Date());
+
+/** `bytea`: o driver `pg` entrega e aceita `Buffer`. */
+export const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType() {
+    return 'bytea';
+  },
+});

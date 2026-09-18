@@ -1,6 +1,6 @@
 # Kanban: contrato da API REST (MVP)
 
-> Status: v1.11 (2026-09-17; v1.2 alinhou ao `scope.md` v2: sem gamificação, cor por lista, prioridade do card, reabrir para o topo; v1.3 adicionou `415 UNSUPPORTED_MEDIA_TYPE`; v1.4 (2026-09-17) fechou ambiguidades ao implementar os schemas das Fatias 2 a 9, ver §18; v1.5 registrou decisões do backend das Fatias 2 e 3, §18.1; v1.6 registrou decisões do backend da Fatia 4, §18.2; v1.7 registrou decisões do backend das Fatias 5 e 6, §18.3; v1.8 registrou decisões do backend das Fatias 7, 8 e 9, §18.4; v1.9 registrou as correções da revisão de segurança, §18.5; v1.10 (2026-09-17) adicionou o código de configuração do setup, `requiresSetupToken` e `403 SETUP_TOKEN_INVALID`, §18.6; v1.11 (2026-09-17) abriu a Fatia 11: visibilidade do card com payload bloqueado e capa de imagem no Cloudflare R2, §18.7; v1.12 (2026-09-17) registrou as decisões do backend da Fatia 11, §18.8; **v1.13 (2026-09-17) moveu a restrição e a capa da Fatia 11 do card para o QUADRO, a pedido do cliente: §2, §3, §9, §11, §15, §16 e §18.9 — §18.7 e §18.8 ficam como histórico**). Complementa `overview.md`. Os schemas Zod em `packages/shared/src/schemas/` são a fonte da verdade em código e devem refletir exatamente este documento. Mudança de contrato = atualizar este arquivo no mesmo PR.
+> Status: v1.14 (2026-09-17; v1.2 alinhou ao `scope.md` v2: sem gamificação, cor por lista, prioridade do card, reabrir para o topo; v1.3 adicionou `415 UNSUPPORTED_MEDIA_TYPE`; v1.4 (2026-09-17) fechou ambiguidades ao implementar os schemas das Fatias 2 a 9, ver §18; v1.5 registrou decisões do backend das Fatias 2 e 3, §18.1; v1.6 registrou decisões do backend da Fatia 4, §18.2; v1.7 registrou decisões do backend das Fatias 5 e 6, §18.3; v1.8 registrou decisões do backend das Fatias 7, 8 e 9, §18.4; v1.9 registrou as correções da revisão de segurança, §18.5; v1.10 (2026-09-17) adicionou o código de configuração do setup, `requiresSetupToken` e `403 SETUP_TOKEN_INVALID`, §18.6; v1.11 (2026-09-17) abriu a Fatia 11: visibilidade do card com payload bloqueado e capa de imagem no Cloudflare R2, §18.7; v1.12 (2026-09-17) registrou as decisões do backend da Fatia 11, §18.8; **v1.13 (2026-09-17) moveu a restrição e a capa da Fatia 11 do card para o QUADRO, a pedido do cliente: §2, §3, §9, §11, §15, §16 e §18.9 — §18.7 e §18.8 ficam como histórico**; v1.14 acrescentou a foto de perfil, §6, §7 e §18.10). Complementa `overview.md`. Os schemas Zod em `packages/shared/src/schemas/` são a fonte da verdade em código e devem refletir exatamente este documento. Mudança de contrato = atualizar este arquivo no mesmo PR.
 
 ## 1. Convenções
 
@@ -42,7 +42,8 @@ type Placement =
 // Prazo na entrada, no fuso do workspace
 type DueInput = { date: string /* YYYY-MM-DD */; time: string | null /* HH:mm 24h */ };
 
-type SessionUser = { id: Uuid; name: string; email: string; role: Role };
+// `avatarUpdatedAt`: quando a foto foi enviada, ou null sem foto. Versiona a URL do avatar (§7).
+type SessionUser = { id: Uuid; name: string; email: string; role: Role; avatarUpdatedAt: IsoDateTime | null };
 type Workspace = { name: string; timezone: string };
 
 // Recursos ligados nesta instância (dependem de configuração, não de papel). Fatia 11.
@@ -50,7 +51,7 @@ type Workspace = { name: string; timezone: string };
 type Features = { boardCovers: boolean };
 
 // Visão pública de usuário (listas, avatares, atribuição). Sem e-mail.
-type UserSummary = { id: Uuid; name: string; role: Role; status: UserStatus; anonymized: boolean };
+type UserSummary = { id: Uuid; name: string; role: Role; status: UserStatus; anonymized: boolean; avatarUpdatedAt: IsoDateTime | null };
 
 // Capa do quadro (Fatia 11, ADR 0016). `url` é assinada e de curta duração (validade entre 10 e
 // 15 min, ver §18.7 item 55). `width`/`height` são os do arquivo enviado, informados pelo cliente,
@@ -247,6 +248,17 @@ Body `{ currentPassword, newPassword }`. `currentPassword` segue a regra do logi
 - Grava hash; apaga todas as sessões do usuário **exceto a atual**.
 204.
 
+### `PUT /api/me/avatar` · Auth
+Body `{ contentType: 'image/webp' | 'image/jpeg' | 'image/png'; data: string /* base64 */ }`. A imagem vai **em JSON** porque a API não aceita outro `Content-Type` (overview §6.3); o front recorta um quadrado de 256 px e comprime antes de enviar.
+- Máximo 128 KB **depois** de decodificar (`AVATAR_MAX_BYTES`); acima disso, `400 VALIDATION_ERROR` em `data`.
+- Os primeiros bytes têm que casar com o `contentType` (assinatura do arquivo) → senão `400 VALIDATION_ERROR` em `data`.
+- Substitui a foto anterior (uma por usuário) e atualiza `avatarUpdatedAt`.
+200 `{ user: SessionUser }`.
+
+### `DELETE /api/me/avatar` · Auth
+Apaga a foto e zera `avatarUpdatedAt`. Idempotente (sem foto também responde 204).
+204.
+
 ### `GET /api/me/cards` · Auth
 Cards `open`, não arquivados, em lista e quadro não arquivados, com o usuário entre os responsáveis **e em quadro acessível a ele** (card de quadro restrito sem acesso é omitido, não bloqueado: ADR 0015). Ordenados por `dueAt ASC NULLS LAST`, depois prioridade (`urgent`, `high`, `medium`, `low`, sem prioridade), depois `createdAt ASC`. O agrupamento (Atrasados/Vencendo/Com prazo/Sem prazo) é feito no front com `getDueState`, preservando essa ordem dentro de cada grupo (D1).
 200 `{ cards: Array<CardSummary & { boardName: string; listName: string; listColor: PaletteColor }> }`.
@@ -256,6 +268,10 @@ Cards `open`, não arquivados, em lista e quadro não arquivados, com o usuário
 ### `GET /api/users` · Auth
 Todos os usuários (ativos, desativados e anonimizados), ordenados por nome. Usado para nomes/iniciais e seletor de responsáveis (a UI só oferece `status = 'active'`).
 200 `{ users: UserSummary[] }`. **Sem e-mail.**
+
+### `GET /api/users/:userId/avatar` · Auth
+Foto de perfil de qualquer usuário: é o `src` do avatar na interface. Resposta **binária** (`Content-Type` do arquivo), com `ETag` e `Cache-Control: private, max-age=86400` — a única rota sem `no-store`, porque a interface versiona a URL com `?v=<avatarUpdatedAt>` e uma foto nova muda a URL. `If-None-Match` igual → 304.
+200 (imagem) · 304 · 404 `NOT_FOUND` (usuário sem foto ou inexistente).
 
 ## 8. Administração (tudo **Admin**)
 
@@ -722,3 +738,12 @@ a cards. A migration `0009` cria as estruturas do quadro e derruba as do card. S
     inclusive o prefixo `covers/`, agora com o `boardId` no lugar do `cardId`. Como a varredura
     apaga todo objeto sob `covers/` sem linha em `board_covers` e com mais de 24 h, os arquivos das
     antigas capas de card são recolhidos sozinhos depois do deploy.
+
+### 18.10 Foto de perfil (v1.14)
+
+Muda schema: migration `0010_user_avatars`.
+
+78. **Onde ficam os bytes**: tabela `user_avatars` (`user_id` PK → `users` `ON DELETE CASCADE`, `content_type`, `bytes` `bytea`, `updated_at`), com `CHECK` de tipo e de tamanho (1–128 KB), fora de `users` para que nenhum `SELECT` de usuário carregue imagem. Diferente da capa do quadro (R2, ADR 0016), a foto **não** usa armazenamento externo: são 128 KB por pessoa, o backup do banco já os leva junto, e assim o avatar funciona em instância sem R2 configurado.
+79. **Versão espelhada em `users.avatar_updated_at`** (nulo sem foto), gravada na mesma transação dos bytes: sessão, `GET /api/users` e administração devolvem `avatarUpdatedAt` sem join nem bytes. O front monta `/api/users/:id/avatar?v=<avatarUpdatedAt>`; a URL muda quando a foto muda, e por isso essa rota pode ser cacheada.
+80. **Recorte e compressão no cliente** (`src/lib/avatar-file.ts` no `ronin-web`): quadrado central, 256 px, WebP com qualidade decrescente e JPEG como reserva (navegador que não codifica WebP), até caber em 128 KB. O servidor não decodifica imagem — confere tamanho e assinatura do arquivo (PNG, JPEG e o cabeçalho `RIFF`/`WEBP`) e devolve sempre com `X-Content-Type-Options: nosniff`.
+81. **Anonimizar apaga a foto** (LGPD): a linha de `user_avatars` cai na mesma transação e `avatar_updated_at` volta a nulo.

@@ -1,6 +1,8 @@
 import type { SessionUser } from '@raphasparda/ronin-shared';
 
 import type { DbExecutor } from '../../db/client';
+import type { UserRow } from '../../db/schema';
+import { toIso } from '../../lib/dates';
 import { isTokenFormat, randomToken, sha256Hex } from '../../lib/tokens';
 
 import {
@@ -11,6 +13,23 @@ import {
   updateSessionActivity,
   type SessionWithUser,
 } from './repository';
+
+/**
+ * `UserRow` → `SessionUser`. O e-mail vem à parte porque na linha ele é anulável (anonimizado) e
+ * quem monta a sessão já garantiu que existe.
+ */
+export function toSessionUser(
+  row: Pick<UserRow, 'id' | 'name' | 'role' | 'avatarUpdatedAt'>,
+  email: string,
+): SessionUser {
+  return {
+    id: row.id,
+    name: row.name,
+    email,
+    role: row.role,
+    avatarUpdatedAt: row.avatarUpdatedAt === null ? null : toIso(row.avatarUpdatedAt),
+  };
+}
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
@@ -61,7 +80,7 @@ export function checkSession({ session, user }: SessionWithUser, now: Date): Ses
   }
   return {
     valid: true,
-    user: { id: user.id, name: user.name, email: user.email, role: user.role },
+    user: toSessionUser(user, user.email),
     needsTouch: t - session.lastSeenAt.getTime() >= SESSION_TOUCH_INTERVAL_MS,
   };
 }

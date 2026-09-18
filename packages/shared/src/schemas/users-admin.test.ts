@@ -236,7 +236,13 @@ describe('me', () => {
     expect(updateMeRequestSchema.parse({ name: ' Ana ' })).toEqual({ name: 'Ana' });
     expect(issuePaths(updateMeRequestSchema.safeParse({ name: '  ' }))).toEqual(['name']);
     expect(issuePaths(updateMeRequestSchema.safeParse({ name: 'a'.repeat(81) }))).toEqual(['name']);
-    const user = { id: ID.user, name: 'Ana', email: 'ana@exemplo.com', role: 'member' };
+    const user = {
+      id: ID.user,
+      name: 'Ana',
+      email: 'ana@exemplo.com',
+      role: 'member',
+      avatarUpdatedAt: null,
+    };
     expect(updateMeResponseSchema.parse({ user })).toEqual({ user });
   });
 

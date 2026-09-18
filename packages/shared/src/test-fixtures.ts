@@ -39,6 +39,7 @@ export const userSummary: UserSummary = {
   role: 'admin',
   status: 'active',
   anonymized: false,
+  avatarUpdatedAt: null,
 };
 
 export const adminUser: AdminUser = { ...userSummary, email: 'ana@exemplo.com', createdAt: T0 };

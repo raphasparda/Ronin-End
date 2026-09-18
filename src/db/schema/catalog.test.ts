@@ -46,6 +46,7 @@ describeDb('schema: catálogo do MVP (fatias 2–9) e da fatia 11', () => {
       'lists',
       'notifications',
       'sessions',
+      'user_avatars',
       'users',
       'workspace',
     ]);

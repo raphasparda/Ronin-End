@@ -308,7 +308,13 @@ describeDb('convites (kanban_test)', () => {
       expect(res.statusCode).toBe(201);
       const body = acceptInviteResponseSchema.strict().parse(res.json());
       expect(body).toEqual({
-        user: { id: body.user.id, name: 'Nova Pessoa', email: 'nova@exemplo.com', role: 'admin' },
+        user: {
+          id: body.user.id,
+          name: 'Nova Pessoa',
+          email: 'nova@exemplo.com',
+          role: 'admin',
+          avatarUpdatedAt: null,
+        },
         workspace: { name: 'Ronin', timezone: 'America/Sao_Paulo' },
         features: { boardCovers: false },
       });

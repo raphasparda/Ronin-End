@@ -175,7 +175,13 @@ describe('loginRequestSchema', () => {
 
 describe('respostas', () => {
   const session = {
-    user: { id: UUID, name: 'Ana', email: 'ana@exemplo.com', role: 'admin' },
+    user: {
+      id: UUID,
+      name: 'Ana',
+      email: 'ana@exemplo.com',
+      role: 'admin',
+      avatarUpdatedAt: null,
+    },
     workspace: { name: 'Equipe', timezone: 'America/Sao_Paulo' },
     features: { boardCovers: false },
   };

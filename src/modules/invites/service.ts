@@ -25,7 +25,7 @@ import {
   revokePendingInvite,
   setTokenUsedBy,
 } from '../auth-tokens/repository';
-import { createSession, deleteSession } from '../sessions/service';
+import { createSession, deleteSession, toSessionUser } from '../sessions/service';
 import { findUserByEmail, insertUser } from '../users/repository';
 import { getWorkspace } from '../workspace/service';
 
@@ -166,7 +166,7 @@ export async function acceptInvite(
 
       return {
         token,
-        user: { id: user.id, name: user.name, email: input.email, role: user.role },
+        user: toSessionUser(user, input.email),
         workspace: await getWorkspace(tx),
       };
     });

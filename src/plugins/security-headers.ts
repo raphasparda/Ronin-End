@@ -28,8 +28,13 @@ export async function registerSecurityHeaders(app: FastifyInstance): Promise<voi
     },
   });
 
-  app.addHook('onSend', (_request, reply, payload, done) => {
-    void reply.header('cache-control', 'no-store');
+  app.addHook('onSend', (request, reply, payload, done) => {
+    // Só rotas que declaram `config.cacheControl` escapam do `no-store` (hoje: a foto de perfil,
+    // cuja URL já carrega a versão), e mesmo assim só em respostas de sucesso: erro guardado por
+    // um dia esconderia a foto que acabou de chegar.
+    const cacheControl = request.routeOptions.config.cacheControl;
+    const cacheable = cacheControl !== undefined && reply.statusCode < 400;
+    void reply.header('cache-control', cacheable ? cacheControl : 'no-store');
     done(null, payload);
   });
 }

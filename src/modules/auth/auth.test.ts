@@ -68,7 +68,13 @@ describeDb('módulo auth (kanban_test)', () => {
       const res = await login(a, { email: '  ANA@exemplo.com ', password: DEFAULT_PASSWORD });
       expect(res.statusCode).toBe(200);
       expect(authSessionResponseSchema.strict().parse(res.json())).toEqual({
-        user: { id: userId, name: 'Ana', email: 'ana@exemplo.com', role: 'admin' },
+        user: {
+          id: userId,
+          name: 'Ana',
+          email: 'ana@exemplo.com',
+          role: 'admin',
+          avatarUpdatedAt: null,
+        },
         workspace: { name: 'Ronin', timezone: 'America/Sao_Paulo' },
         features: { boardCovers: false },
       });
