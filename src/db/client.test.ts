@@ -27,6 +27,6 @@ describe('TLS a partir da DATABASE_URL', () => {
   );
 
   it('sem sslmode (dev local) não liga TLS', () => {
-    expect(sslFromUrl('postgres://kanban:kanban@127.0.0.1:5433/kanban')).toBeFalsy();
+    expect(sslFromUrl('postgres://ronin:ronin@127.0.0.1:5433/ronin')).toBeFalsy();
   });
 });

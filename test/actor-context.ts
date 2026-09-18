@@ -1,5 +1,5 @@
-import type { BoardActor } from '../src/modules/boards/access';
-import type { CoverReadContext } from '../src/modules/boards/cover';
+import type { BoardActor } from '../src/modules/tools/kanban/boards/access';
+import type { CoverReadContext } from '../src/modules/tools/kanban/boards/cover';
 
 import type { Actor } from './actors';
 

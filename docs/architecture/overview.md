@@ -1,4 +1,4 @@
-# Kanban: arquitetura do MVP
+# Ronin: arquitetura do MVP
 
 > Status: v1.1 (2026-09-16). Autor: Raphael Sparda.
 > v1.2: alinhado ao `scope.md` v2: sem gamificação; cor por lista (paleta fixa); prioridade do card; reabrir vai para o topo; operação em VPS (banco fechado, backup fora da VPS, volta após reboot).
@@ -7,6 +7,7 @@
 > v1.5: revisão de segurança: reserva atômica de tentativa no login e na troca de senha e limites de rota (§6.4), revogação dos tokens de quem perde o papel (§6.5), logs de erro de banco sem valores (§6.7), configuração fail-closed `NODE_ENV` × `APP_ORIGIN` e requisitos do deploy (§3, §6.8). Detalhes em `api.md` §18.5.
 > v1.6: setup inicial protegido por `SETUP_TOKEN`, obrigatório em produção (§3, §6.8); `TRUST_PROXY` aceita número de saltos e lista de IPs/CIDRs (§3, §6.8); `dist/migrate.js` aplica as migrations sem `tsx` e `pnpm start:prod` roda migrations + servidor (§3, §10).
 > v1.7 (Fatia 11): **quadros restritos** (`boards.visibility`, `board_viewers`, listagem bloqueada e checagem única de acesso: §4.4, §5.1, §6.6, ADR 0015) e **capa do quadro** no Cloudflare R2 com upload direto e URLs assinadas (`board_covers`, variáveis do R2, §4.5, §5.1, §6.9, ADR 0016). A primeira versão da fatia fazia as duas coisas no **card**; o cliente corrigiu o alvo em 2026-09-17 e a migration `0009` moveu tudo para o quadro (`api.md` §18.9).
+> v1.6 (2026-09-18): pacote renomeado para `@ronin/api` (cookie `ronin_sid`, header `X-Ronin-Csrf`, bancos `ronin*`) e código separado em `platform/` e `tools/kanban/` (§3): o Ronin passa a ser um hub de ferramentas, e o Kanban é a primeira.
 > Fonte de requisitos: `docs/product/scope.md` (inclui "Decisões confirmadas pelo cliente").
 > Documentos irmãos: `api.md` (contrato REST), `plan.md` (plano de implementação), `adr/` (decisões).
 
@@ -65,7 +66,6 @@ Versões: fixar a última estável compatível no momento da Fatia 0 e registrar
 | Ordenação | `fractional-indexing` | Chaves de posição sem renumerar vizinhos (ADR 0004). |
 | Banco | PostgreSQL 18 (imagem `postgres:18-alpine`) | Padrão. |
 | ORM | `drizzle-orm` + `drizzle-kit` + driver `pg` | Padrão; migrations SQL versionadas. |
-| Datas | `date-fns` + `@date-fns/tz` | Conversão com fuso IANA do workspace, leve. |
 | Front build | Vite 7 + React 19 | SPA; não há necessidade de SSR/SEO (app autenticado). |
 | Rotas front | `react-router` 7 (modo biblioteca, `createBrowserRouter`) | Maduro, simples. |
 | Estado servidor | TanStack Query 5 | Cache, polling, updates otimistas com rollback. |
@@ -88,7 +88,7 @@ Proibido: Supabase, Firebase, PocketBase ou qualquer BaaS; login social; analyti
 ```
 kanban/
 ├─ apps/
-│  ├─ api/                         # @kanban/api
+│  ├─ api/                         # @ronin/api
 │  │  ├─ src/
 │  │  │  ├─ server.ts              # entrypoint: lê env, buildApp(), listen
 │  │  │  ├─ app.ts                 # buildApp(opts): registra plugins e módulos (usado nos testes)
@@ -113,19 +113,23 @@ kanban/
 │  │  │  │  ├─ r2.ts               # (Fatia 11) SigV4 próprio: presign PUT/GET, HEAD, DELETE, List
 │  │  │  │  └─ time.ts             # conversões com fuso do workspace
 │  │  │  └─ modules/
-│  │  │     ├─ setup/  auth/  me/  users/  admin/
-│  │  │     ├─ boards/ lists/ cards/ labels/ checklists/ comments/
-│  │  │     ├─ activity/           # recordActivity(tx, ...) e leitura
-│  │  │     ├─ notifications/      # notify(tx, ...) e rotas
-│  │  │     ├─ completion/         # serviço único de concluir/reabrir (ADR 0010)
-│  │  │     └─ boards/access.ts    # (Fatia 11) checagem única de acesso ao quadro (ADR 0015)
-│  │  │        boards/cover.ts     # (Fatia 11) serviço da capa: assinar, confirmar, remover
+│  │  │     ├─ platform/           # o que toda ferramenta do hub usa
+│  │  │     │  ├─ setup/ auth/ sessions/ auth-tokens/ invites/ password-resets/
+│  │  │     │  ├─ users/ me/ avatars/ admin/ workspace/ health/
+│  │  │     │  └─ notifications/   # notify(tx, ...) e rotas
+│  │  │     └─ tools/
+│  │  │        └─ kanban/          # ferramenta Kanban; index.ts exporta registerKanbanTool(app)
+│  │  │           ├─ boards/ lists/ cards/ labels/ checklists/ comments/
+│  │  │           ├─ boards/access.ts  # (Fatia 11) checagem única de acesso ao quadro (ADR 0015)
+│  │  │           ├─ boards/cover.ts   # (Fatia 11) serviço da capa: assinar, confirmar, remover
+│  │  │           ├─ activity/     # recordActivity(tx, ...) e leitura
+│  │  │           └─ completion/   # serviço único de concluir/reabrir (ADR 0010)
 │  │  │        (cada módulo: routes.ts + service.ts; testes em *.test.ts ao lado)
 │  │  ├─ drizzle/                  # migrations SQL geradas (commitadas)
 │  │  ├─ test/                     # setup global (migrate, truncate), factories, helpers de login
 │  │  ├─ drizzle.config.ts
 │  │  └─ Dockerfile                # (Fatia 10)
-│  └─ web/                         # @kanban/web
+│  └─ web/                         # @ronin/web
 │     ├─ src/
 │     │  ├─ main.tsx
 │     │  ├─ router.tsx
@@ -134,11 +138,11 @@ kanban/
 │     │  ├─ components/ui/         # Button, Input, Dialog, Menu, Toast, Badge, Switch...
 │     │  ├─ components/layout/     # AppHeader (com slide de tema), RequireAuth
 │     │  ├─ features/
-│     │  │  ├─ setup/ auth/ profile/ admin/
-│     │  │  ├─ boards/             # home de quadros, arquivados
-│     │  │  ├─ board/              # quadro, listas, cards, DnD, filtro, "Mover para…"
-│     │  │  ├─ card-detail/        # modal/rota do card, checklists, comentários, atividade
-│     │  │  ├─ my-cards/  notifications/
+│     │  │  ├─ platform/           # auth/ admin/ profile/ notifications/ users/ health/ home/ dev/
+│     │  │  └─ tools/kanban/
+│     │  │     ├─ boards/          # home de quadros, arquivados, quadro, listas, DnD, filtro, capa
+│     │  │     ├─ cards/           # detalhe do card, checklists, comentários, atividade, "Mover para…"
+│     │  │     └─ my-cards/
 │     │  └─ test/                  # setup do Vitest, handlers MSW
 │     ├─ e2e/                      # Playwright
 │     ├─ index.html
@@ -146,12 +150,15 @@ kanban/
 ├─ packages/
 │  └─ shared/                      # @raphasparda/ronin-shared
 │     └─ src/
-│        ├─ index.ts
-│        ├─ errors.ts              # ErrorCode (union) + envelope
-│        ├─ schemas/               # common.ts, auth.ts, users.ts, boards.ts, lists.ts, cards.ts ...
-│        └─ domain/                # due-state.ts, palette.ts, priority.ts, constants.ts (+ *.test.ts)
+│        ├─ index.ts               # barrel único: reexporta platform e tools
+│        ├─ platform/
+│        │  ├─ errors.ts           # ErrorCode (union) + envelope
+│        │  └─ schemas/            # common.ts, auth.ts, users.ts, admin.ts, me.ts, notifications.ts
+│        └─ tools/kanban/
+│           ├─ schemas/            # boards.ts, lists.ts, cards.ts, labels.ts, checklists.ts, comments.ts, activity.ts
+│           └─ domain/             # due-state.ts, palette.ts, priority.ts, board-access.ts ... (+ *.test.ts)
 ├─ infra/
-│  ├─ postgres/init/01-test-db.sql # cria kanban_test no container de dev
+│  ├─ postgres/init/01-test-db.sql # cria ronin_test no container de dev
 │  ├─ postgres/local-setup.sql     # alternativa: role e bancos no Postgres nativo (idempotente)
 │  ├─ Caddyfile                    # (Fatia 10)
 │  └─ docker-compose.prod.yml      # (Fatia 10)
@@ -172,6 +179,7 @@ kanban/
 Regras de dependência:
 - `apps/web` e `apps/api` importam `@raphasparda/ronin-shared`. `shared` não importa nada dos apps e não depende de Node nem de DOM (só `zod` e `fractional-indexing` se preciso).
 - `@raphasparda/ronin-shared` é consumido **como fonte TS** (`"exports": { ".": "./src/index.ts" }`). Vite, Vitest e tsx entendem TS; o build da API (tsup) empacota o shared com `noExternal: ['@raphasparda/ronin-shared']`.
+- `platform/` não deve depender de `tools/`, e uma ferramenta não importa outra. Exceções herdadas do MVP, a resolver quando entrar a segunda ferramenta: `platform/me` serve `GET /api/me/cards`, `platform/notifications` referencia cards e comentários, e `shared/platform/schemas/common.ts` importa o domínio do Kanban.
 - Dentro da API, módulos só conversam por funções exportadas do `service.ts` de outro módulo. Rotas nunca importam `db/schema` de outro módulo diretamente para escrever. Mudanças de `status` do card só acontecem via `modules/completion`.
 
 Windows (ambiente do cliente):
@@ -199,8 +207,8 @@ Variáveis de ambiente (`.env.example`):
 
 | Variável | Exemplo dev | Notas |
 |----------|-------------|-------|
-| `DATABASE_URL` | `postgres://kanban:kanban@127.0.0.1:5433/kanban` | banco local do `pnpm dev`; nativo usa 5432 |
-| `TEST_DATABASE_URL` | `postgres://kanban:kanban@127.0.0.1:5433/kanban_test` | usado pelo Vitest da API; o globalSetup sobe o banco local se não responder e aplica as migrations |
+| `DATABASE_URL` | `postgres://ronin:ronin@127.0.0.1:5433/ronin` | banco local do `pnpm dev`; nativo usa 5432 |
+| `TEST_DATABASE_URL` | `postgres://ronin:ronin@127.0.0.1:5433/ronin_test` | usado pelo Vitest da API; o globalSetup sobe o banco local se não responder e aplica as migrations |
 | `DATABASE_POOL_MAX` | `10` | conexões máximas do pool `pg` da API (1–100, padrão 10). No Neon free, sugerido `5` |
 | `MIGRATIONS_DIR` | (vazio) | pasta das migrations para `pnpm db:migrate` e `node dist/migrate.js`. Padrão: `drizzle/` da raiz do repositório rodando pela fonte; `<cwd>/drizzle` rodando do build |
 | `POSTGRES_PORT` | `5433` | porta do host no docker-compose (alternativa Docker) |
@@ -285,7 +293,7 @@ Um único serviço `completion.service` aplica transições. Tudo roda na mesma 
 - `workspace.timezone` IANA, padrão `America/Sao_Paulo`.
 - O cliente envia `{ date: "YYYY-MM-DD", time: "HH:mm" | null }` sempre **no fuso do workspace**. O servidor converte e grava `due_at timestamptz` (UTC) + `due_has_time boolean`. Sem hora: `due_at` = `23:59:59.999` daquele dia no fuso do workspace.
 - A resposta devolve `dueAt` (ISO UTC) e `dueHasTime`. O front exibe no fuso do workspace (não do navegador).
-- Estado do prazo (`packages/shared/src/domain/due-state.ts`, `getDueState({ status, dueAt }, now)`): `completed` se card concluído; `none` se sem prazo; `overdue` se `now > dueAt`; `due_soon` se `dueAt − now ≤ 24h`; senão `scheduled`. Mesma função no front (face do card, filtro, Meus cards).
+- Estado do prazo (`packages/shared/src/tools/kanban/domain/due-state.ts`, `getDueState({ status, dueAt }, now)`): `completed` se card concluído; `none` se sem prazo; `overdue` se `now > dueAt`; `due_soon` se `dueAt − now ≤ 24h`; senão `scheduled`. Mesma função no front (face do card, filtro, Meus cards).
 
 ### 4.4 Visibilidade do quadro (Fatia 11) — ver ADR 0015
 
@@ -729,7 +737,7 @@ Infra: `db/client.ts` (`createPool` com `max` = `DATABASE_POOL_MAX`, `createDb` 
 
 ### 5.3 Atividade (C12)
 
-`activity_type` e formato de `data` (schema Zod em `packages/shared/src/schemas/activity.ts`):
+`activity_type` e formato de `data` (schema Zod em `packages/shared/src/tools/kanban/schemas/activity.ts`):
 
 | type | data |
 |------|------|
@@ -757,7 +765,7 @@ Nomes são "fotografados" em `data` para o histórico continuar legível. Nome d
 
 ### 6.2 Sessão (ADR 0002)
 - Token: 32 bytes de `crypto.randomBytes`, base64url, enviado só no cookie. No banco: `sessions.id = sha256(token)`.
-- Cookie: nome `__Host-kanban_sid` em produção (`Secure`), `kanban_sid` em dev (http://localhost); `HttpOnly`, `SameSite=Lax`, `Path=/`, sem `Domain`, `Max-Age` = 30 dias.
+- Cookie: nome `__Host-ronin_sid` em produção (`Secure`), `ronin_sid` em dev (http://localhost); `HttpOnly`, `SameSite=Lax`, `Path=/`, sem `Domain`, `Max-Age` = 30 dias.
 - Por request (`plugins/session.ts`, hook `onRequest`): busca sessão por hash com join em `users`; válida se `idle_expires_at > now`, `absolute_expires_at > now` e `users.status='active'`. Caso contrário, apaga o cookie e segue sem usuário. Se `last_seen_at` tem mais de 5 min, atualiza `last_seen_at` e `idle_expires_at`.
 - `request.user = { id, name, email, role }` carregado do banco a cada request: mudança de papel vale na hora.
 - Rotas autenticadas por padrão: o plugin registra um hook global que exige usuário, exceto rotas marcadas com `config: { public: true }` (health, setup, login, logout, lookup/aceite de convite, lookup/uso de reset, `/api/docs` fora de produção) e 404. O hook é `preParsing` (não `preHandler`, que roda depois da validação) para cumprir a ordem 401 → 403 CSRF → 400 de api.md §3; o CSRF (`plugins/csrf.ts`) é outro `preParsing` logo depois. O rate limit geral roda no `onRequest` da rota, entre a carga da sessão e essas checagens. `requireAdmin` é `preHandler` de rota (403 de permissão vem depois da validação).
@@ -767,7 +775,7 @@ Nomes são "fotografados" em `data` para o histórico continuar legível. Nome d
 ### 6.3 CSRF (ADR 0002)
 Para todo método diferente de `GET`/`HEAD`/`OPTIONS` em `/api/*`, `plugins/csrf.ts` exige:
 1. Header `Origin` igual a `APP_ORIGIN`. Se ausente, aceitar só se `Sec-Fetch-Site: same-origin`. Senão `403 CSRF_REJECTED`.
-2. Header `X-Kanban-Csrf: 1`. Ausente → `403 CSRF_REJECTED`.
+2. Header `X-Ronin-Csrf: 1`. Ausente → `403 CSRF_REJECTED`.
 3. Corpo, quando existir, com `Content-Type: application/json`. O parser padrão de `text/plain` do Fastify é removido em `buildApp()`, então qualquer outro tipo é recusado com `415 UNSUPPORTED_MEDIA_TYPE`.
 
 Somado a `SameSite=Lax` e à ausência de CORS, isso bloqueia formulários e fetch de outras origens. `GET` nunca altera estado. O `api-client` do front envia o header sempre.
@@ -807,7 +815,7 @@ Nota: o escopo cita "5 tentativas para o mesmo e-mail ou IP". Para IP usamos 20 
 
 | Camada | Função | Usada por |
 |--------|--------|-----------|
-| Regra pura | `canAccessBoard({ visibility, viewerIds }, actor)` (`modules/boards/access.ts`, espelhada no shared para o front) | UI (esconder ações), testes |
+| Regra pura | `canAccessBoard({ visibility, viewerIds }, actor)` (`modules/tools/kanban/boards/access.ts`, espelhada no shared para o front) | UI (esconder ações), testes |
 | Mutação de quadro/lista | `assertBoardAccess` chamado **dentro** de `lockBoard()`/`lockWritableBoard()` | quadro, visibilidade, viewers, capa, listas |
 | Mutação de card e conteúdo | `assertBoardAccess` chamado **dentro** de `lockCard()` (sobre os quadros já bloqueados; no `move`, os dois) | cards, checklists, comentários, etiquetas, responsáveis |
 | Leitura | `assertBoardAccess` | `GET /api/boards/:id`, `/archived`, `GET /api/cards/:cardId`, `/activity` |
@@ -876,7 +884,7 @@ Envelope único (schema `errorResponseSchema` no shared):
 ```
 
 - API: serviços lançam `AppError(code, httpStatus, message, details?)`. `plugins/errors.ts` converte: `AppError` → envelope; erro de validação Zod → `400 VALIDATION_ERROR` com `details`; violação de unicidade Postgres (`23505`) não tratada → `409 CONFLICT`; 404 de rota → `NOT_FOUND`; qualquer outro → `500 INTERNAL_ERROR` com mensagem genérica (stack só no log).
-- Tabela completa de códigos em `api.md` §3; a union `ErrorCode` vive em `packages/shared/src/errors.ts` e front e back usam a mesma.
+- Tabela completa de códigos em `api.md` §3; a union `ErrorCode` vive em `packages/shared/src/platform/errors.ts` e front e back usam a mesma.
 - Front: `api-client.ts` lança `ApiError { status, code, message, details }`. Tratamento global no `QueryClient`:
   - `401 UNAUTHENTICATED` → limpa cache e redireciona para `/login?next=<rota>`.
   - `403` → toast "Você não tem permissão para isso".
@@ -916,7 +924,7 @@ Envelope único (schema `errorResponseSchema` no shared):
 | Camada | Ferramenta | O que cobre | Onde |
 |--------|-----------|-------------|------|
 | Domínio puro | Vitest | `getDueState` (limites 24h, sem hora, concluído), `nextPaletteColor`, ranking de prioridade, schemas Zod (normalização de e-mail, limites) | `packages/shared/src/**/*.test.ts` |
-| API integração (principal) | Vitest + `app.inject()` + Postgres real (`kanban_test`) | Toda rota: sucesso, validação, 401, 403, CSRF, conflitos. Matriz de conclusão/reabertura (ADR 0010). Matriz de acesso ao quadro restrito: ator (admin/member) × visibilidade × viewer × rota (quadro, listas, cards, comentários, checklists, etiquetas, responsáveis), mais o teste de vazamento do `LockedBoard` (ADR 0015). Ordenação concorrente. Revogação de sessões. | `src/modules/**/*.test.ts` |
+| API integração (principal) | Vitest + `app.inject()` + Postgres real (`ronin_test`) | Toda rota: sucesso, validação, 401, 403, CSRF, conflitos. Matriz de conclusão/reabertura (ADR 0010). Matriz de acesso ao quadro restrito: ator (admin/member) × visibilidade × viewer × rota (quadro, listas, cards, comentários, checklists, etiquetas, responsáveis), mais o teste de vazamento do `LockedBoard` (ADR 0015). Ordenação concorrente. Revogação de sessões. | `src/modules/**/*.test.ts` |
 | Capa (R2) | Vitest + R2 falso (rota `fetch` interceptada) | Assinatura SigV4 contra vetor conhecido; confirmação com objeto ausente/grande/tipo errado/magic bytes errados; troca e remoção; janela de URL estável; R2 fora do ar → `503`; limpeza de órfãos (ADR 0016) | `src/lib/r2.test.ts`, `src/modules/boards/cover.test.ts` |
 | Front componentes | Vitest + Testing Library + MSW | Face do card (estados de prazo com texto), filtro, rollback do movimento otimista, formulários com erros de validação, "Mover para…" por teclado | `src/**/*.test.tsx` (ronin-web) |
 | E2E | Playwright (Chromium no CI; Firefox/WebKit localmente antes do release) | Fluxos críticos (lista em `plan.md` Fatia 10) | `e2e/` (ronin-web) |
@@ -925,7 +933,7 @@ Envelope único (schema `errorResponseSchema` no shared):
 Infra de teste da API:
 - `vitest.config.ts` da API: `globalSetup` aplica migrations em `TEST_DATABASE_URL`; `fileParallelism: false`; `beforeEach` roda `TRUNCATE ... RESTART IDENTITY CASCADE` em todas as tabelas (exceto a de migrations).
 - Argon2 nos testes: `lib/password.ts` aceita parâmetros reduzidos quando `NODE_ENV=test` (`memoryCost: 1024, timeCost: 1`) para velocidade. Produção nunca usa esse caminho.
-- Helpers em `test/`: `createTestApp()`, `factories` (`createUser`, `createBoard`, `createCard`...), `loginAs(user)` → retorna headers com cookie + `Origin` + `X-Kanban-Csrf`.
+- Helpers em `test/`: `createTestApp()`, `factories` (`createUser`, `createBoard`, `createCard`...), `loginAs(user)` → retorna headers com cookie + `Origin` + `X-Ronin-Csrf`.
 - Relógio: serviços recebem `now` via `request.server.clock()` (decorator substituível nos testes) para testar prazos, expirações e limpeza.
 
 CI (`.github/workflows/ci.yml`): job único em `ubuntu-latest` com serviço `postgres:18-alpine`; passos `pnpm install --frozen-lockfile` → `lint` → `typecheck` → `test` → `build` → `test:e2e` (sobe API + `vite preview` com proxy). Artefatos do Playwright em falha.

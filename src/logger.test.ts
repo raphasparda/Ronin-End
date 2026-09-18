@@ -40,8 +40,8 @@ describe('logger', () => {
     const log = pino({ level: 'info', redact }, stream);
 
     log.info({
-      req: { headers: { cookie: 'kanban_sid=abc', authorization: 'Bearer x', host: 'h' } },
-      res: { headers: { 'set-cookie': 'kanban_sid=abc' } },
+      req: { headers: { cookie: 'ronin_sid=abc', authorization: 'Bearer x', host: 'h' } },
+      res: { headers: { 'set-cookie': 'ronin_sid=abc' } },
       body: {
         password: 'p1',
         currentPassword: 'p2',
@@ -54,7 +54,7 @@ describe('logger', () => {
 
     const [entry] = lines();
     const text = JSON.stringify(entry);
-    for (const secret of ['kanban_sid=abc', 'Bearer x', '"p1"', '"p2"', '"p3"', '"t"', '"st"']) {
+    for (const secret of ['ronin_sid=abc', 'Bearer x', '"p1"', '"p2"', '"p3"', '"t"', '"st"']) {
       expect(text).not.toContain(secret);
     }
     expect(entry).toMatchObject({
@@ -158,7 +158,7 @@ describe('logger: serializer de err (api.md §18.5)', () => {
   });
 });
 
-describeDb('logger: erro real de unicidade do PostgreSQL (kanban_test)', () => {
+describeDb('logger: erro real de unicidade do PostgreSQL (ronin_test)', () => {
   const { db } = useTestDatabase();
 
   it('o log não contém o e-mail nem o hash de senha', async () => {

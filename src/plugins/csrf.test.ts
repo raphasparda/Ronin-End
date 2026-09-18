@@ -9,25 +9,25 @@ import { isCsrfAllowed } from './csrf';
 const ORIGIN = testEnv().APP_ORIGIN;
 
 describe('isCsrfAllowed', () => {
-  it('exige Origin igual ao APP_ORIGIN e X-Kanban-Csrf: 1', () => {
-    expect(isCsrfAllowed({ origin: ORIGIN, 'x-kanban-csrf': '1' }, ORIGIN)).toBe(true);
+  it('exige Origin igual ao APP_ORIGIN e X-Ronin-Csrf: 1', () => {
+    expect(isCsrfAllowed({ origin: ORIGIN, 'x-ronin-csrf': '1' }, ORIGIN)).toBe(true);
     expect(isCsrfAllowed({ origin: ORIGIN }, ORIGIN)).toBe(false);
-    expect(isCsrfAllowed({ origin: ORIGIN, 'x-kanban-csrf': 'true' }, ORIGIN)).toBe(false);
-    expect(isCsrfAllowed({ origin: 'https://evil.example', 'x-kanban-csrf': '1' }, ORIGIN)).toBe(
+    expect(isCsrfAllowed({ origin: ORIGIN, 'x-ronin-csrf': 'true' }, ORIGIN)).toBe(false);
+    expect(isCsrfAllowed({ origin: 'https://evil.example', 'x-ronin-csrf': '1' }, ORIGIN)).toBe(
       false,
     );
-    expect(isCsrfAllowed({ origin: 'null', 'x-kanban-csrf': '1' }, ORIGIN)).toBe(false);
-    expect(isCsrfAllowed({ origin: `${ORIGIN}/`, 'x-kanban-csrf': '1' }, ORIGIN)).toBe(false);
+    expect(isCsrfAllowed({ origin: 'null', 'x-ronin-csrf': '1' }, ORIGIN)).toBe(false);
+    expect(isCsrfAllowed({ origin: `${ORIGIN}/`, 'x-ronin-csrf': '1' }, ORIGIN)).toBe(false);
   });
 
   it('sem Origin, aceita só Sec-Fetch-Site: same-origin', () => {
-    expect(isCsrfAllowed({ 'sec-fetch-site': 'same-origin', 'x-kanban-csrf': '1' }, ORIGIN)).toBe(
+    expect(isCsrfAllowed({ 'sec-fetch-site': 'same-origin', 'x-ronin-csrf': '1' }, ORIGIN)).toBe(
       true,
     );
-    expect(isCsrfAllowed({ 'sec-fetch-site': 'cross-site', 'x-kanban-csrf': '1' }, ORIGIN)).toBe(
+    expect(isCsrfAllowed({ 'sec-fetch-site': 'cross-site', 'x-ronin-csrf': '1' }, ORIGIN)).toBe(
       false,
     );
-    expect(isCsrfAllowed({ 'x-kanban-csrf': '1' }, ORIGIN)).toBe(false);
+    expect(isCsrfAllowed({ 'x-ronin-csrf': '1' }, ORIGIN)).toBe(false);
   });
 });
 
@@ -52,8 +52,8 @@ describe('plugins/csrf', () => {
   it.each([
     ['sem header nem Origin', {}],
     ['sem header', { origin: ORIGIN }],
-    ['sem Origin', { 'x-kanban-csrf': '1' }],
-    ['Origin de outro site', { origin: 'https://evil.example', 'x-kanban-csrf': '1' }],
+    ['sem Origin', { 'x-ronin-csrf': '1' }],
+    ['Origin de outro site', { origin: 'https://evil.example', 'x-ronin-csrf': '1' }],
   ])('mutação %s → 403 CSRF_REJECTED', async (_label, headers) => {
     const res = await post(headers);
     expect(res.statusCode).toBe(403);
@@ -61,7 +61,7 @@ describe('plugins/csrf', () => {
   });
 
   it('mutação com Origin e header passa', async () => {
-    const res = await post({ origin: ORIGIN, 'x-kanban-csrf': '1' });
+    const res = await post({ origin: ORIGIN, 'x-ronin-csrf': '1' });
     expect(res.statusCode).toBe(200);
   });
 

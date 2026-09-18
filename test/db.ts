@@ -6,7 +6,7 @@ import { createDb, type Database } from '../src/db/client';
 
 loadDotEnv();
 
-/** Banco de testes (`kanban_test`). Migrado pelo globalSetup antes de qualquer arquivo rodar. */
+/** Banco de testes (`ronin_test`). Migrado pelo globalSetup antes de qualquer arquivo rodar. */
 export const testDatabaseUrl = process.env.TEST_DATABASE_URL?.trim() || undefined;
 
 /** `describe` que só roda com `TEST_DATABASE_URL` definida (o CI e o dev local sempre definem). */

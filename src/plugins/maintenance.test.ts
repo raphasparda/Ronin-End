@@ -41,7 +41,7 @@ async function seedNotifications(db: Database) {
   return { user, other, rows };
 }
 
-describeDb('manutenção (kanban_test)', () => {
+describeDb('manutenção (ronin_test)', () => {
   const { db } = useTestDatabase();
 
   describe('runMaintenance', () => {

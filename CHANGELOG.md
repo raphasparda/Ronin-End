@@ -2,11 +2,18 @@
 
 Todas as mudanças relevantes do Ronin ficam registradas aqui.
 
-O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/). O projeto ainda não tem versão publicada: tudo abaixo está em "Unreleased" (não lançado) até o deploy da Fatia 10.
+O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o versionamento semântico. A 0.9.0 fecha o MVP (Fatias 0 a 9) e a Fatia 11, já em produção no Render; a 1.0.0 será a versão em VPS própria (Fatia 10).
 
 ## [Unreleased]
 
-Entrega das Fatias 0 a 9 do MVP, na branch `feat/mvp-fatias-2-9`. A Fatia 10 (produção em VPS, backup e revisão final) ainda está pendente: veja [`docs/ops/known-issues.md`](docs/ops/known-issues.md).
+### Alterado
+
+- O Ronin passa a ser um hub de ferramentas, e o Kanban é a primeira. O código foi separado em `src/modules/platform` (configuração inicial, autenticação, membros, perfil, administração, notificações) e `src/modules/tools/kanban` (quadros, listas, cards, etiquetas, checklists, comentários, atividade, conclusão); o mesmo vale para `packages/shared/src`. A ferramenta entra na API por um único registrador (`registerKanbanTool`).
+- Nome interno `kanban` trocado por `ronin`: pacote `@ronin/api`, cookie de sessão `ronin_sid` (`__Host-ronin_sid` em produção), header CSRF `X-Ronin-Csrf` e bancos de desenvolvimento e CI `ronin`, `ronin_test` e `ronin_e2e`. Sessões existentes deixam de valer no primeiro deploy: todo mundo entra de novo. O front precisa estar na versão que envia o header novo.
+
+## [0.9.0] - 2026-09-18
+
+Entrega das Fatias 0 a 9 do MVP e da Fatia 11. A Fatia 10 (produção em VPS, backup e revisão final) ainda está pendente: veja [`docs/ops/known-issues.md`](docs/ops/known-issues.md).
 
 ### Foto de perfil (backend)
 
@@ -112,7 +119,7 @@ Como a Fatia 11 foi para produção há poucos dias e as duas funções mal cheg
 #### Testes e CI
 
 - Testes de integração da API contra PostgreSQL real, testes de componentes com MSW e testes de domínio.
-- E2E com Playwright e checagem de acessibilidade com axe, em banco isolado `kanban_e2e`, cobrindo os fluxos das Fatias 1 a 9 (inclusive dois usuários).
+- E2E com Playwright e checagem de acessibilidade com axe, em banco isolado `ronin_e2e`, cobrindo os fluxos das Fatias 1 a 9 (inclusive dois usuários).
 - Workflow do GitHub Actions com lint, typecheck, testes, build e E2E ([`docs/ops/ci.md`](docs/ops/ci.md)).
 
 ### Segurança

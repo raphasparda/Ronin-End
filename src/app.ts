@@ -26,22 +26,17 @@ import {
 import { argon2ParamsFor, createPasswordHasher, type PasswordHasher } from './lib/password';
 import type { R2Client } from './lib/r2';
 import { buildLoggerOptions } from './logger';
-import { adminRoutes } from './modules/admin/routes';
-import { authRoutes } from './modules/auth/routes';
-import { avatarRoutes } from './modules/avatars/routes';
-import { boardRoutes } from './modules/boards/routes';
-import { cardRoutes } from './modules/cards/routes';
-import { checklistRoutes } from './modules/checklists/routes';
-import { commentRoutes } from './modules/comments/routes';
-import { healthRoutes } from './modules/health/routes';
-import { inviteRoutes } from './modules/invites/routes';
-import { labelRoutes } from './modules/labels/routes';
-import { listRoutes } from './modules/lists/routes';
-import { meRoutes } from './modules/me/routes';
-import { notificationRoutes } from './modules/notifications/routes';
-import { passwordResetRoutes } from './modules/password-resets/routes';
-import { setupRoutes } from './modules/setup/routes';
-import { userRoutes } from './modules/users/routes';
+import { adminRoutes } from './modules/platform/admin/routes';
+import { authRoutes } from './modules/platform/auth/routes';
+import { avatarRoutes } from './modules/platform/avatars/routes';
+import { healthRoutes } from './modules/platform/health/routes';
+import { inviteRoutes } from './modules/platform/invites/routes';
+import { meRoutes } from './modules/platform/me/routes';
+import { notificationRoutes } from './modules/platform/notifications/routes';
+import { passwordResetRoutes } from './modules/platform/password-resets/routes';
+import { setupRoutes } from './modules/platform/setup/routes';
+import { userRoutes } from './modules/platform/users/routes';
+import { registerKanbanTool } from './modules/tools/kanban';
 import { registerCsrf } from './plugins/csrf';
 import { registerErrorHandlers } from './plugins/errors';
 import { registerMaintenance } from './plugins/maintenance';
@@ -175,13 +170,10 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   await app.register(userRoutes);
   await app.register(avatarRoutes);
   await app.register(adminRoutes, { appOrigin: env.APP_ORIGIN });
-  await app.register(boardRoutes);
-  await app.register(listRoutes);
-  await app.register(cardRoutes);
-  await app.register(labelRoutes);
-  await app.register(checklistRoutes);
-  await app.register(commentRoutes);
   await app.register(notificationRoutes);
+
+  // Ferramentas do hub: cada uma entra por um único registrador (modules/tools/<tool>/index.ts).
+  await registerKanbanTool(app);
 
   return app;
 }

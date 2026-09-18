@@ -67,7 +67,7 @@ describe('plugins/security-headers', () => {
     const prod = await createTestApp({
       env: testEnv({
         NODE_ENV: 'production',
-        APP_ORIGIN: 'https://kanban.example',
+        APP_ORIGIN: 'https://ronin.example',
         SETUP_TOKEN: 'codigo-de-setup-de-teste',
       }),
     });

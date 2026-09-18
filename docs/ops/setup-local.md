@@ -49,9 +49,9 @@ Quem sobe o banco é dono dele e o para ao sair:
 ## Migrations
 
 - `pnpm dev`: aplica automaticamente em `DATABASE_URL` antes de subir a API.
-- `pnpm test`: o globalSetup aplica em `TEST_DATABASE_URL` (`kanban_test`) antes dos testes.
+- `pnpm test`: o globalSetup aplica em `TEST_DATABASE_URL` (`ronin_test`) antes dos testes.
 - Manual: `pnpm db:migrate` (idempotente; registro em `drizzle.__drizzle_migrations`; execuções concorrentes são serializadas por advisory lock).
-- `pnpm test:e2e` (ronin-web): aplica em `kanban_e2e`, no mesmo servidor do `DATABASE_URL` deste repositório.
+- `pnpm test:e2e` (ronin-web): aplica em `ronin_e2e`, no mesmo servidor do `DATABASE_URL` deste repositório.
 - Mudou o schema em `src/db/schema`: `pnpm db:generate --name <descricao>`, revise o SQL em `drizzle/` e commite. Nunca edite migration já aplicada.
 
 ## Problemas comuns

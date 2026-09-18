@@ -5,7 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import { AppError } from '../lib/app-error';
 
 /** Header obrigatório em métodos mutáveis (o `api-client` do front sempre envia `1`). */
-export const CSRF_HEADER = 'x-kanban-csrf';
+export const CSRF_HEADER = 'x-ronin-csrf';
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
@@ -15,7 +15,7 @@ export const CSRF_REJECTED_MESSAGE =
 /**
  * Regra de CSRF (overview.md §6.3, ADR 0002) para um método mutável:
  * 1. `Origin` igual a `APP_ORIGIN`; sem `Origin`, só com `Sec-Fetch-Site: same-origin`;
- * 2. `X-Kanban-Csrf: 1`.
+ * 2. `X-Ronin-Csrf: 1`.
  */
 export function isCsrfAllowed(headers: IncomingHttpHeaders, appOrigin: string): boolean {
   const origin = headers.origin;

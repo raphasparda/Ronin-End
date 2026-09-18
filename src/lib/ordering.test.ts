@@ -9,7 +9,7 @@ import { insertBoard, insertList, insertUser } from '../db/test-fixtures';
 import { AppError } from './app-error';
 import { computePosition, LIST_SIBLINGS, MAX_POSITION_LENGTH } from './ordering';
 
-describeDb('computePosition (kanban_test)', () => {
+describeDb('computePosition (ronin_test)', () => {
   const { db } = useTestDatabase();
   let boardId: string;
 

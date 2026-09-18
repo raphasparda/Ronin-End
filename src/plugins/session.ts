@@ -9,7 +9,7 @@ import type {
 
 import type { Env } from '../config/env';
 import { AppError } from '../lib/app-error';
-import { SESSION_ABSOLUTE_TTL_MS, resolveSession } from '../modules/sessions/service';
+import { SESSION_ABSOLUTE_TTL_MS, resolveSession } from '../modules/platform/sessions/service';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -28,7 +28,7 @@ declare module 'fastify' {
 
 /** Nome do cookie: `__Host-` (exige `Secure`, `Path=/`, sem `Domain`) só em produção. */
 export function sessionCookieName(nodeEnv: Env['NODE_ENV']): string {
-  return nodeEnv === 'production' ? '__Host-kanban_sid' : 'kanban_sid';
+  return nodeEnv === 'production' ? '__Host-ronin_sid' : 'ronin_sid';
 }
 
 /**

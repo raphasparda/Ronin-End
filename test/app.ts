@@ -6,7 +6,7 @@ export function testEnv(overrides: Record<string, string> = {}): Env {
   return parseEnv({
     NODE_ENV: 'test',
     // Porta 1 recusa conexão: qualquer uso acidental do banco real falha rápido.
-    DATABASE_URL: 'postgres://kanban:kanban@127.0.0.1:1/kanban',
+    DATABASE_URL: 'postgres://ronin:ronin@127.0.0.1:1/ronin',
     APP_ORIGIN: 'http://localhost:5173',
     LOG_LEVEL: 'silent',
     ...overrides,
@@ -15,7 +15,7 @@ export function testEnv(overrides: Record<string, string> = {}): Env {
 
 /** Headers que passam no CSRF (overview.md §6.3) para o `APP_ORIGIN` de `testEnv()`. */
 export function csrfHeaders(env: Pick<Env, 'APP_ORIGIN'> = testEnv()): Record<string, string> {
-  return { origin: env.APP_ORIGIN, 'x-kanban-csrf': '1' };
+  return { origin: env.APP_ORIGIN, 'x-ronin-csrf': '1' };
 }
 
 export const healthyDatabase = (): Promise<void> => Promise.resolve();

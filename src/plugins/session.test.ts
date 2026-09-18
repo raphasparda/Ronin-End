@@ -20,17 +20,17 @@ import {
   SESSION_ABSOLUTE_TTL_MS,
   SESSION_IDLE_TTL_MS,
   SESSION_TOUCH_INTERVAL_MS,
-} from '../modules/sessions/service';
+} from '../modules/platform/sessions/service';
 
 import { requireAdmin, sessionCookieName, sessionCookieOptions } from './session';
 
 const DAY_MS = 86_400_000;
 
 describe('cookie de sessão (atributos)', () => {
-  it('dev/test: kanban_sid sem Secure; produção: __Host-kanban_sid com Secure', () => {
-    expect(sessionCookieName('development')).toBe('kanban_sid');
-    expect(sessionCookieName('test')).toBe('kanban_sid');
-    expect(sessionCookieName('production')).toBe('__Host-kanban_sid');
+  it('dev/test: ronin_sid sem Secure; produção: __Host-ronin_sid com Secure', () => {
+    expect(sessionCookieName('development')).toBe('ronin_sid');
+    expect(sessionCookieName('test')).toBe('ronin_sid');
+    expect(sessionCookieName('production')).toBe('__Host-ronin_sid');
     expect(sessionCookieOptions('development')).toEqual({
       httpOnly: true,
       sameSite: 'lax',
@@ -41,7 +41,7 @@ describe('cookie de sessão (atributos)', () => {
   });
 });
 
-describeDb('plugins/session (kanban_test)', () => {
+describeDb('plugins/session (ronin_test)', () => {
   const { db } = useTestDatabase();
   let app: App | undefined;
   const clock = createTestClock();
@@ -65,7 +65,7 @@ describeDb('plugins/session (kanban_test)', () => {
   function expectClearedCookie(res: Awaited<ReturnType<typeof me>>): void {
     const cookie = sessionCookieOf(res);
     expect(cookie?.value).toBe('');
-    expect(res.headers['set-cookie']).toMatch(/kanban_sid=;.*Expires=Thu, 01 Jan 1970/);
+    expect(res.headers['set-cookie']).toMatch(/ronin_sid=;.*Expires=Thu, 01 Jan 1970/);
   }
 
   it('sessão válida preenche request.user; sem cookie → 401 UNAUTHENTICATED', async () => {
@@ -176,7 +176,7 @@ describeDb('plugins/session (kanban_test)', () => {
   it('cookie malformado ou inexistente → 401 e cookie limpo', async () => {
     const a = await setupApp();
     for (const value of ['lixo', randomToken()]) {
-      const res = await me(a, `kanban_sid=${value}`);
+      const res = await me(a, `ronin_sid=${value}`);
       expect(res.statusCode).toBe(401);
       expectClearedCookie(res);
     }
@@ -240,8 +240,8 @@ describeDb('plugins/session (kanban_test)', () => {
     expect(ok.statusCode).toBe(204);
   });
 
-  it('NODE_ENV=production: cookie __Host-kanban_sid com Secure, HttpOnly, SameSite=Lax, Path=/', async () => {
-    const origin = 'https://kanban.example';
+  it('NODE_ENV=production: cookie __Host-ronin_sid com Secure, HttpOnly, SameSite=Lax, Path=/', async () => {
+    const origin = 'https://ronin.example';
     app = await createDbTestApp({
       clock: clock.now,
       envOverrides: {
@@ -264,7 +264,7 @@ describeDb('plugins/session (kanban_test)', () => {
     });
     expect(res.statusCode).toBe(201);
     const header = String(res.headers['set-cookie']);
-    expect(header).toMatch(/^__Host-kanban_sid=[A-Za-z0-9_-]{43};/);
+    expect(header).toMatch(/^__Host-ronin_sid=[A-Za-z0-9_-]{43};/);
     expect(header).toContain('Max-Age=2592000');
     expect(header).toContain('Path=/');
     expect(header).toContain('HttpOnly');
@@ -277,13 +277,13 @@ describeDb('plugins/session (kanban_test)', () => {
     const plain = await app.inject({
       method: 'GET',
       url: '/api/auth/me',
-      headers: { cookie: `kanban_sid=${token}` },
+      headers: { cookie: `ronin_sid=${token}` },
     });
     expect(plain.statusCode).toBe(401);
     const prefixed = await app.inject({
       method: 'GET',
       url: '/api/auth/me',
-      headers: { cookie: `__Host-kanban_sid=${token}` },
+      headers: { cookie: `__Host-ronin_sid=${token}` },
     });
     expect(prefixed.statusCode).toBe(200);
   });
@@ -304,7 +304,7 @@ describeDb('plugins/session (kanban_test)', () => {
     });
     expect(res.statusCode).toBe(201);
     const header = String(res.headers['set-cookie']);
-    expect(header).toMatch(/^kanban_sid=/);
+    expect(header).toMatch(/^ronin_sid=/);
     expect(header).not.toContain('Secure');
     expect(header).toContain('HttpOnly');
   });

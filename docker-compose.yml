@@ -1,14 +1,14 @@
 # Ambiente de desenvolvimento: só o PostgreSQL.
 # Uso: pnpm db:up / pnpm db:down. Produção fica em infra/docker-compose.prod.yml (Fatia 10).
-name: kanban
+name: ronin
 
 services:
   postgres:
     image: postgres:18-alpine
     environment:
-      POSTGRES_USER: kanban
-      POSTGRES_PASSWORD: kanban
-      POSTGRES_DB: kanban
+      POSTGRES_USER: ronin
+      POSTGRES_PASSWORD: ronin
+      POSTGRES_DB: ronin
     ports:
       # Só na interface local: o banco de dev nunca fica exposto na rede.
       - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
@@ -17,7 +17,7 @@ services:
       - postgres-data:/var/lib/postgresql
       - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U kanban -d kanban']
+      test: ['CMD-SHELL', 'pg_isready -U ronin -d ronin']
       interval: 5s
       timeout: 5s
       retries: 10

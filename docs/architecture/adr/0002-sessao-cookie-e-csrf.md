@@ -11,7 +11,7 @@ Auth própria por e-mail/senha. Requisitos: sessão que expira, invalidação no
 - Cookie `HttpOnly`, `SameSite=Lax`, `Path=/`, `Secure` e prefixo `__Host-` em produção.
 - Expiração ociosa de 14 dias e absoluta de 30 dias; `last_seen_at` atualizado no máximo a cada 5 min.
 - Usuário e papel recarregados do banco a cada request (mudança de papel ou desativação valem na hora).
-- CSRF em métodos mutáveis: `Origin` deve ser igual a `APP_ORIGIN` (ou `Sec-Fetch-Site: same-origin` se `Origin` ausente) **e** header `X-Kanban-Csrf: 1` obrigatório; corpo só JSON. Sem CORS habilitado.
+- CSRF em métodos mutáveis: `Origin` deve ser igual a `APP_ORIGIN` (ou `Sec-Fetch-Site: same-origin` se `Origin` ausente) **e** header `X-Ronin-Csrf: 1` obrigatório; corpo só JSON. Sem CORS habilitado.
 
 ## Alternativas
 - JWT de acesso + refresh rotativo: exige lista de revogação para cumprir "invalidar sessões", mais peças móveis e nenhum ganho para um único servidor.

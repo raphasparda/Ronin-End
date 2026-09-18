@@ -6,7 +6,7 @@ import { buildApp, type App, type BuildAppOptions } from '../src/app';
 import type { Database } from '../src/db/client';
 import { users, workspace, type UserRow } from '../src/db/schema';
 import { argon2ParamsFor, createPasswordHasher, type PasswordHasher } from '../src/lib/password';
-import { createSession } from '../src/modules/sessions/service';
+import { createSession } from '../src/modules/platform/sessions/service';
 
 import { csrfHeaders, testEnv } from './app';
 import { testDatabaseUrl } from './db';
@@ -72,7 +72,7 @@ export async function sessionCookieFor(
   db: Database,
   userId: string,
   now: Date,
-  cookieName = 'kanban_sid',
+  cookieName = 'ronin_sid',
 ): Promise<string> {
   const { token } = await createSession(db, userId, now);
   return `${cookieName}=${token}`;
@@ -81,13 +81,13 @@ export async function sessionCookieFor(
 /** Cookie de sessão gravado pela resposta (`Set-Cookie`), se houver. */
 export function sessionCookieOf(
   res: LightMyRequestResponse,
-  cookieName = 'kanban_sid',
+  cookieName = 'ronin_sid',
 ): { name: string; value: string; maxAge?: number } | undefined {
   return res.cookies.find((c) => c.name === cookieName);
 }
 
 /** Header `cookie` a partir do `Set-Cookie` da resposta. */
-export function cookieHeaderOf(res: LightMyRequestResponse, cookieName = 'kanban_sid'): string {
+export function cookieHeaderOf(res: LightMyRequestResponse, cookieName = 'ronin_sid'): string {
   const cookie = sessionCookieOf(res, cookieName);
   if (!cookie) throw new Error(`resposta sem cookie ${cookieName}`);
   return `${cookie.name}=${cookie.value}`;

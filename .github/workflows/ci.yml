@@ -20,8 +20,8 @@ env:
   # Nunca subir o PostgreSQL embutido (scripts/dev-db/postgres.mjs): o CI usa só o serviço abaixo.
   DEV_DB_EXTERNAL_ONLY: 'true'
   # Serviço postgres:18-alpine publicado na 5432 do runner. Credenciais descartáveis, só do CI.
-  DATABASE_URL: postgres://kanban:kanban@127.0.0.1:5432/kanban
-  TEST_DATABASE_URL: postgres://kanban:kanban@127.0.0.1:5432/kanban_test
+  DATABASE_URL: postgres://ronin:ronin@127.0.0.1:5432/ronin
+  TEST_DATABASE_URL: postgres://ronin:ronin@127.0.0.1:5432/ronin_test
   APP_ORIGIN: http://127.0.0.1:5310
   LOG_LEVEL: warn
 
@@ -35,13 +35,13 @@ jobs:
       postgres:
         image: postgres:18-alpine
         env:
-          POSTGRES_USER: kanban
-          POSTGRES_PASSWORD: kanban
-          POSTGRES_DB: kanban
+          POSTGRES_USER: ronin
+          POSTGRES_PASSWORD: ronin
+          POSTGRES_DB: ronin
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U kanban -d kanban"
+          --health-cmd "pg_isready -U ronin -d ronin"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
@@ -62,8 +62,8 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
 
-      - name: Criar banco de testes (kanban_test)
-        run: docker exec "${{ job.services.postgres.id }}" psql -U kanban -d kanban -v ON_ERROR_STOP=1 -c "CREATE DATABASE kanban_test OWNER kanban"
+      - name: Criar banco de testes (ronin_test)
+        run: docker exec "${{ job.services.postgres.id }}" psql -U ronin -d ronin -v ON_ERROR_STOP=1 -c "CREATE DATABASE ronin_test OWNER ronin"
 
       - name: Instalar dependências
         run: pnpm install --frozen-lockfile

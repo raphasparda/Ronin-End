@@ -26,7 +26,7 @@ function userInput(overrides: Partial<NewUserRow> = {}): NewUserRow {
   };
 }
 
-describeDb('schema: workspace, users, sessions, auth_throttle (kanban_test)', () => {
+describeDb('schema: workspace, users, sessions, auth_throttle (ronin_test)', () => {
   const { db, pool } = useTestDatabase();
 
   it('roda no banco de testes com as migrations aplicadas', async () => {

@@ -2,16 +2,16 @@
  * Exemplos válidos de respostas (só para testes; não exportado pelo barrel).
  * Servem também de referência para handlers MSW.
  */
-import type { Activity } from './schemas/activity';
-import type { Invite } from './schemas/admin';
-import type { Board, BoardCover, BoardDetail, LockedBoard } from './schemas/boards';
-import type { CardDetail, CardSummary } from './schemas/cards';
-import type { Checklist } from './schemas/checklists';
-import type { Comment } from './schemas/comments';
-import type { Label } from './schemas/labels';
-import type { List } from './schemas/lists';
-import type { Notification } from './schemas/notifications';
-import type { AdminUser, UserSummary } from './schemas/users';
+import type { Activity } from './tools/kanban/schemas/activity';
+import type { Invite } from './platform/schemas/admin';
+import type { Board, BoardCover, BoardDetail, LockedBoard } from './tools/kanban/schemas/boards';
+import type { CardDetail, CardSummary } from './tools/kanban/schemas/cards';
+import type { Checklist } from './tools/kanban/schemas/checklists';
+import type { Comment } from './tools/kanban/schemas/comments';
+import type { Label } from './tools/kanban/schemas/labels';
+import type { List } from './tools/kanban/schemas/lists';
+import type { Notification } from './platform/schemas/notifications';
+import type { AdminUser, UserSummary } from './platform/schemas/users';
 
 export const ID = {
   user: '3f1c2b1e-8a4d-4c3b-9f2e-1a2b3c4d5e6f',

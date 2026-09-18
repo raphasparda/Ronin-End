@@ -1,4 +1,4 @@
-# Kanban: contrato da API REST (MVP)
+# Ronin: contrato da API REST (MVP)
 
 > Status: v1.14 (2026-09-17; v1.2 alinhou ao `scope.md` v2: sem gamificação, cor por lista, prioridade do card, reabrir para o topo; v1.3 adicionou `415 UNSUPPORTED_MEDIA_TYPE`; v1.4 (2026-09-17) fechou ambiguidades ao implementar os schemas das Fatias 2 a 9, ver §18; v1.5 registrou decisões do backend das Fatias 2 e 3, §18.1; v1.6 registrou decisões do backend da Fatia 4, §18.2; v1.7 registrou decisões do backend das Fatias 5 e 6, §18.3; v1.8 registrou decisões do backend das Fatias 7, 8 e 9, §18.4; v1.9 registrou as correções da revisão de segurança, §18.5; v1.10 (2026-09-17) adicionou o código de configuração do setup, `requiresSetupToken` e `403 SETUP_TOKEN_INVALID`, §18.6; v1.11 (2026-09-17) abriu a Fatia 11: visibilidade do card com payload bloqueado e capa de imagem no Cloudflare R2, §18.7; v1.12 (2026-09-17) registrou as decisões do backend da Fatia 11, §18.8; **v1.13 (2026-09-17) moveu a restrição e a capa da Fatia 11 do card para o QUADRO, a pedido do cliente: §2, §3, §9, §11, §15, §16 e §18.9 — §18.7 e §18.8 ficam como histórico**; v1.14 acrescentou a foto de perfil, §6, §7 e §18.10). Complementa `overview.md`. Os schemas Zod em `packages/shared/src/schemas/` são a fonte da verdade em código e devem refletir exatamente este documento. Mudança de contrato = atualizar este arquivo no mesmo PR.
 
@@ -9,7 +9,7 @@
 - Datas: ISO 8601 UTC (`2026-09-16T14:03:00.000Z`). Exceção: entrada de prazo (`DueInput`) em data/hora local do workspace.
 - Strings de entrada passam por `trim()`; limites de tamanho valem após o trim.
 - Autenticação: cookie de sessão (ver `overview.md` §6). Toda rota exige sessão, salvo as marcadas **Pública**.
-- Métodos mutáveis (`POST`, `PATCH`, `PUT`, `DELETE`) exigem `Origin` igual a `APP_ORIGIN` e header `X-Kanban-Csrf: 1`; senão `403 CSRF_REJECTED`.
+- Métodos mutáveis (`POST`, `PATCH`, `PUT`, `DELETE`) exigem `Origin` igual a `APP_ORIGIN` e header `X-Ronin-Csrf: 1`; senão `403 CSRF_REJECTED`.
 - Sucesso sem corpo: `204`. Criação: `201` com o recurso.
 - Ações idempotentes de "estado" usam `PUT`/`DELETE` em sub-recursos (responsáveis, etiquetas) e `POST /.../archive|restore|complete|reopen`, que retornam `200` mesmo se já estiverem no estado pedido.
 - Sem paginação no MVP, exceto notificações (§15). Limites de porte: `overview.md` / scope §0.
@@ -315,7 +315,7 @@ Body `{ name?, timezone? }` (ao menos um). 200 `{ workspace: Workspace }`.
 > Quem não tem acesso vê o quadro na listagem como `LockedBoard` (id, nome e cadeado) e recebe
 > `403 BOARD_RESTRICTED` em **toda** rota do quadro, das listas dele, dos cards dele e do conteúdo
 > dos cards (comentários, checklists, etiquetas, responsáveis, atividade). A checagem é uma função
-> só (`modules/boards/access.ts`), chamada de dentro do `lockBoard()`/`lockCard()` que todas as
+> só (`modules/tools/kanban/boards/access.ts`), chamada de dentro do `lockBoard()`/`lockCard()` que todas as
 > mutações já usam.
 
 ### `GET /api/boards?archived=false|true` · Auth
@@ -409,7 +409,7 @@ Restaura no **fim** do quadro (nova `position`); cards voltam com as posições 
 
 ## 11. Cards
 
-> **Acesso ao card (Fatia 11, ADR 0015).** O card **não** tem visibilidade própria: quem decide é o quadro (§9). Toda rota desta seção (e as de checklists, comentários, etiquetas e responsáveis do card) checa o acesso ao quadro do card logo depois do 404 e antes de qualquer 409 → `403 BOARD_RESTRICTED`. A checagem é uma função só (`modules/boards/access.ts`), chamada de dentro do `lockCard()` que todas as mutações já usam. Em quadro `team` vale a RN05 (todo usuário ativo lê e edita). Mover um card **para** um quadro restrito sem acesso também é `403 BOARD_RESTRICTED`.
+> **Acesso ao card (Fatia 11, ADR 0015).** O card **não** tem visibilidade própria: quem decide é o quadro (§9). Toda rota desta seção (e as de checklists, comentários, etiquetas e responsáveis do card) checa o acesso ao quadro do card logo depois do 404 e antes de qualquer 409 → `403 BOARD_RESTRICTED`. A checagem é uma função só (`modules/tools/kanban/boards/access.ts`), chamada de dentro do `lockCard()` que todas as mutações já usam. Em quadro `team` vale a RN05 (todo usuário ativo lê e edita). Mover um card **para** um quadro restrito sem acesso também é `403 BOARD_RESTRICTED`.
 
 ### `POST /api/lists/:listId/cards` · Auth
 Body `{ title }`. Cria no fim da lista. Lista arquivada → `LIST_ARCHIVED`; lista de conclusão → `LIST_IS_DONE_LIST`. Atividade `card_created`.
@@ -606,7 +606,7 @@ Nenhuma muda schema.
 29. **Checklists e itens**: toda mutação 400 → 404 → `409 BOARD_ARCHIVED` (→ `409 INVALID_PLACEMENT` no `move`: `after` de outro checklist, inexistente ou o próprio item). Marcar item já marcado mantém `checkedBy`/`checkedAt` originais; desmarcar limpa os dois. Valores iguais → 200 sem gravar. Nenhuma ação de checklist gera atividade ou muda o status do card. Checklists no detalhe: `createdAt`, depois `id`.
 30. **Comentários**: `PATCH`/`DELETE` na ordem 400 → 404 → 403 → `409 BOARD_ARCHIVED` (não autor recebe 403 mesmo em quadro arquivado). `PATCH` com o mesmo corpo (após `trim`) → 200 sem alterar `editedAt`. O corpo é guardado como texto Markdown cru (só `trim`), sem sanitizar nem gerar HTML (ADR 0007).
 31. **Payload do quadro**: 6 consultas (o §9 listava 5 e omitia `labels`); teste garante que o número não cresce com cards, etiquetas e responsáveis.
-32. **Ganchos de notificação**: `onAssigned` (atribuição nova) e `onCommented` (comentário novo) em `src/modules/notifications/hooks.ts`, chamados na transação da ação e hoje sem efeito. A tarefa 7.3 aplica lá a regra de não autonotificar e só destinatários ativos.
+32. **Ganchos de notificação**: `onAssigned` (atribuição nova) e `onCommented` (comentário novo) em `src/modules/platform/notifications/hooks.ts`, chamados na transação da ação e hoje sem efeito. A tarefa 7.3 aplica lá a regra de não autonotificar e só destinatários ativos.
 33. **Locks**: quadro `FOR SHARE` → card `FOR UPDATE` → checklist → item / comentário (`FOR UPDATE`). Atribuir bloqueia o usuário alvo `FOR SHARE` (desativar em paralelo espera). Criar/editar/excluir etiqueta: quadro `FOR SHARE` → etiqueta `FOR UPDATE`.
 
 ### 18.4 Decisões fechadas na implementação do backend das Fatias 7, 8 e 9 (v1.8)
@@ -625,7 +625,7 @@ Nenhuma muda schema.
 
 Nenhuma muda schema nem migration. Rotas afetadas: `POST /api/auth/login`, `POST /api/me/password`, `PATCH /api/admin/users/:userId`, `POST /api/admin/users/:userId/deactivate` e `/anonymize`.
 
-41. **Bloqueio de login sem corrida** (`modules/auth/throttle.ts`): a tentativa é **reservada antes do Argon2** num único `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` por chave (a linha fica travada; requisições paralelas na mesma chave são serializadas). Chave bloqueada: não estende o bloqueio e o contador sobe só até `max + 1`. Tentativa permitida ⇔ contador resultante `<= max`; a que atinge `max` ainda é verificada e aciona o bloqueio. Com isso, 30 logins paralelos com senha errada no mesmo e-mail fazem no máximo 5 verificações (o resto recebe `429 TOO_MANY_ATTEMPTS`); antes, a checagem de bloqueio e a gravação da falha ficavam separadas pelo Argon2 e a rajada inteira passava.
+41. **Bloqueio de login sem corrida** (`modules/platform/auth/throttle.ts`): a tentativa é **reservada antes do Argon2** num único `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` por chave (a linha fica travada; requisições paralelas na mesma chave são serializadas). Chave bloqueada: não estende o bloqueio e o contador sobe só até `max + 1`. Tentativa permitida ⇔ contador resultante `<= max`; a que atinge `max` ainda é verificada e aciona o bloqueio. Com isso, 30 logins paralelos com senha errada no mesmo e-mail fazem no máximo 5 verificações (o resto recebe `429 TOO_MANY_ATTEMPTS`); antes, a checagem de bloqueio e a gravação da falha ficavam separadas pelo Argon2 e a rajada inteira passava.
     - **Ordem no login**: e-mail primeiro, depois IP. E-mail recusado → 429 sem tocar no IP. IP recusado → devolve a reserva do e-mail → 429.
     - **Semântica mantida**: senha errada (ou usuário inexistente/inativo, com o hash fictício) mantém as duas reservas = falha. Sucesso apaga a linha do e-mail e **devolve** a reserva do IP (`failures - 1`; bloqueio desfeito se cair abaixo de 20), então o IP continua somando só falhas e o sucesso não zera as falhas do IP.
     - **Troca de senha** (`POST /api/me/password`): mesma reserva na chave do e-mail antes de verificar `currentPassword`. Errada: a reserva fica (falha) → `400 PASSWORD_INCORRECT`; bloqueada: `429 TOO_MANY_ATTEMPTS`; certa: a reserva é devolvida (a troca não zera nem soma no e-mail, como antes).
@@ -639,7 +639,7 @@ Nenhuma muda schema nem migration. Rotas afetadas: `POST /api/auth/login`, `POST
 
 Preparação do deploy público (`docs/ops/deploy-render.md`). Muda o contrato de `GET /api/setup/status` e `POST /api/setup`; sem migration.
 
-46. **Setup protegido por código** (`modules/setup`, `config/env.ts`): enquanto não existe usuário, quem chegasse primeiro à instância publicada viraria Admin. A variável `SETUP_TOKEN` (16 a 200 caracteres) passa a ser **obrigatória com `NODE_ENV=production`** (a API não sobe sem ela, como na regra do `https://`, `overview.md` §6.8) e opcional fora de produção.
+46. **Setup protegido por código** (`modules/platform/setup`, `config/env.ts`): enquanto não existe usuário, quem chegasse primeiro à instância publicada viraria Admin. A variável `SETUP_TOKEN` (16 a 200 caracteres) passa a ser **obrigatória com `NODE_ENV=production`** (a API não sobe sem ela, como na regra do `https://`, `overview.md` §6.8) e opcional fora de produção.
     - `GET /api/setup/status` ganha `requiresSetupToken: boolean` (`true` quando `SETUP_TOKEN` está configurado, mesmo depois do setup). O valor do código nunca sai na resposta.
     - `POST /api/setup` ganha `setupToken?: string` (máximo 200 caracteres, sem `trim`; acima disso `400 VALIDATION_ERROR` em `setupToken`). Com `SETUP_TOKEN` configurado, ausente ou errado → `403 SETUP_TOKEN_INVALID` ("Código de configuração inválido."), **antes** do atalho de `SETUP_ALREADY_DONE` e do Argon2id. A comparação calcula SHA-256 dos dois lados e usa `crypto.timingSafeEqual` (tamanho e conteúdo não vazam pelo tempo).
     - O rate limit da rota (5 req/15 min por IP) continua valendo e conta as tentativas com código errado. `setupToken` entra no `redact` dos logs.
@@ -655,7 +655,7 @@ Decisões fechadas ao desenhar a Fatia 11 (ADR 0015 e ADR 0016). Mudam schema e 
 
 **Visibilidade (ADR 0015)**
 
-47. **Um lugar só decide acesso.** `modules/cards/access.ts` exporta a função pura (`canAccessCard`), o `assertCardAccess` (`403 CARD_RESTRICTED`) e o predicado SQL (`cardAccessCondition`). O `lockCard()` de `modules/cards/service.ts` — usado por cards, checklists, comentários, etiquetas e responsáveis — passa a receber o ator e chamar o `assertCardAccess` **depois** do 404 do card e **antes** do `409 BOARD_ARCHIVED`, mantendo a ordem 404 → 403 → 409 e cobrindo por construção toda rota que use o lock. Rotas de leitura (`GET /api/cards/:cardId`, `/activity`) chamam o mesmo assert. A checagem roda sobre a linha **bloqueada**: restringir o card em paralelo não deixa passar mutação.
+47. **Um lugar só decide acesso.** `modules/tools/kanban/cards/access.ts` exporta a função pura (`canAccessCard`), o `assertCardAccess` (`403 CARD_RESTRICTED`) e o predicado SQL (`cardAccessCondition`). O `lockCard()` de `modules/cards/service.ts` — usado por cards, checklists, comentários, etiquetas e responsáveis — passa a receber o ator e chamar o `assertCardAccess` **depois** do 404 do card e **antes** do `409 BOARD_ARCHIVED`, mantendo a ordem 404 → 403 → 409 e cobrindo por construção toda rota que use o lock. Rotas de leitura (`GET /api/cards/:cardId`, `/activity`) chamam o mesmo assert. A checagem roda sobre a linha **bloqueada**: restringir o card em paralelo não deixa passar mutação.
 48. **Payload bloqueado é outro tipo, não um card com nulos.** `LockedCard = { id, listId, position, title, locked: true }`; `CardSummary` ganha `locked: false` e as listas passam a ser união discriminada (`BoardCard`). O serializer do Fastify corta qualquer campo extra. Além disso, no payload do quadro e em arquivados, as subconsultas de `checklist`/`commentCount` e as consultas de `card_labels`/`card_assignees` recebem o predicado de acesso: dado de card bloqueado não sai do banco. `CardMutationResult.card` é sempre `CardSummary` (quem mutou tem acesso).
 49. **Filtrar, não bloquear, onde o card é "meu trabalho"**: `GET /api/me/cards` e a listagem/contador de notificações omitem cards sem acesso. A ordem e a paginação (cursor `before`) continuam calculadas depois do filtro, então `unreadCount` e a página saem do mesmo snapshot e não divergem.
 50. **Responsável de card restrito é sempre viewer.** `PUT /api/cards/:cardId/assignees/:userId` insere a pessoa em `card_viewers` na mesma transação (atividade `card_viewer_added` além de `card_assignee_added`). Remover o responsável **não** remove o acesso: só `DELETE .../viewers/:userId` remove. Restringir um card (`PUT .../visibility`) inclui o ator e os responsáveis atuais; voltar para `team` apaga a lista inteira.
@@ -696,7 +696,7 @@ O cliente corrigiu o alvo da fatia depois da implementação: restringir e dar c
 a cards. A migration `0009` cria as estruturas do quadro e derruba as do card. Substitui §18.7 e
 §18.8; as ADRs 0015 e 0016 foram revistas no mesmo sentido.
 
-69. **Um lugar só decide acesso, agora no quadro.** `modules/boards/access.ts` exporta a função pura
+69. **Um lugar só decide acesso, agora no quadro.** `modules/tools/kanban/boards/access.ts` exporta a função pura
     (`canAccessBoard`), o `assertBoardAccess` (`403 BOARD_RESTRICTED`) e o predicado SQL
     (`boardAccessCondition`). `lockBoard()`/`lockWritableBoard()` (quadro e listas) e `lockCard()`
     (cards, checklists, comentários, etiquetas, responsáveis) chamam o assert sobre a **linha já

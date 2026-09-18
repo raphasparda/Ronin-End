@@ -8,7 +8,7 @@ import { createCoverStorage } from './cover-storage';
 import { EnvValidationError, loadDotEnv, parseEnv } from './env';
 
 const base = {
-  DATABASE_URL: 'postgres://kanban:kanban@127.0.0.1:5432/kanban',
+  DATABASE_URL: 'postgres://ronin:ronin@127.0.0.1:5432/ronin',
   APP_ORIGIN: 'http://localhost:5173',
 };
 
@@ -40,7 +40,7 @@ describe('parseEnv', () => {
   it('converte PORT e TRUST_PROXY', () => {
     const env = parseEnv({
       ...base,
-      APP_ORIGIN: 'https://kanban.example',
+      APP_ORIGIN: 'https://ronin.example',
       PORT: '4010',
       TRUST_PROXY: 'true',
       NODE_ENV: 'production',
@@ -104,7 +104,7 @@ describe('parseEnv', () => {
     });
 
     it('produção sem SETUP_TOKEN → erro de configuração (fail-closed)', () => {
-      const prod = { ...base, NODE_ENV: 'production', APP_ORIGIN: 'https://kanban.example' };
+      const prod = { ...base, NODE_ENV: 'production', APP_ORIGIN: 'https://ronin.example' };
       expect(issuesOf(prod)).toEqual(['SETUP_TOKEN']);
       expect(issuesOf({ ...prod, SETUP_TOKEN: '   ' })).toEqual(['SETUP_TOKEN']);
       expect(() => parseEnv(prod)).toThrow(/SETUP_TOKEN/);
@@ -187,10 +187,10 @@ describe('parseEnv', () => {
     it('produção exige https', () => {
       const prod = { ...base, NODE_ENV: 'production', SETUP_TOKEN };
       expect(issuesOf(prod)).toEqual(['APP_ORIGIN']);
-      expect(issuesOf({ ...prod, APP_ORIGIN: 'http://kanban.example' })).toEqual(['APP_ORIGIN']);
-      expect(parseEnv({ ...prod, APP_ORIGIN: 'https://kanban.example' })).toMatchObject({
+      expect(issuesOf({ ...prod, APP_ORIGIN: 'http://ronin.example' })).toEqual(['APP_ORIGIN']);
+      expect(parseEnv({ ...prod, APP_ORIGIN: 'https://ronin.example' })).toMatchObject({
         NODE_ENV: 'production',
-        APP_ORIGIN: 'https://kanban.example',
+        APP_ORIGIN: 'https://ronin.example',
       });
     });
 
@@ -198,7 +198,7 @@ describe('parseEnv', () => {
       'https com NODE_ENV=%s → erro (produção sem NODE_ENV=production)',
       (nodeEnv) => {
         expect(
-          issuesOf({ ...base, NODE_ENV: nodeEnv, APP_ORIGIN: 'https://kanban.example' }),
+          issuesOf({ ...base, NODE_ENV: nodeEnv, APP_ORIGIN: 'https://ronin.example' }),
         ).toEqual(['NODE_ENV']);
       },
     );
@@ -226,28 +226,28 @@ describe('loadDotEnv', () => {
   });
 
   it('sobe até a raiz do workspace e não sobrescreve variáveis já definidas', () => {
-    const root = mkdtempSync(join(tmpdir(), 'kanban-env-'));
+    const root = mkdtempSync(join(tmpdir(), 'ronin-env-'));
     const nested = join(root, 'apps', 'api');
     mkdirSync(nested, { recursive: true });
     writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages: []\n');
-    writeFileSync(join(root, '.env'), 'KANBAN_T_FROM_FILE=file\nKANBAN_T_PRESET=file\n');
-    touched.push('KANBAN_T_FROM_FILE', 'KANBAN_T_PRESET');
-    process.env.KANBAN_T_PRESET = 'ambiente';
+    writeFileSync(join(root, '.env'), 'RONIN_T_FROM_FILE=file\nRONIN_T_PRESET=file\n');
+    touched.push('RONIN_T_FROM_FILE', 'RONIN_T_PRESET');
+    process.env.RONIN_T_PRESET = 'ambiente';
 
     expect(loadDotEnv(nested)).toBe(join(root, '.env'));
-    expect(process.env.KANBAN_T_FROM_FILE).toBe('file');
-    expect(process.env.KANBAN_T_PRESET).toBe('ambiente');
+    expect(process.env.RONIN_T_FROM_FILE).toBe('file');
+    expect(process.env.RONIN_T_PRESET).toBe('ambiente');
   });
 
   it('não passa da raiz do workspace', () => {
-    const outer = mkdtempSync(join(tmpdir(), 'kanban-env-'));
+    const outer = mkdtempSync(join(tmpdir(), 'ronin-env-'));
     const root = join(outer, 'repo');
     mkdirSync(root);
-    writeFileSync(join(outer, '.env'), 'KANBAN_T_OUTSIDE=1\n');
+    writeFileSync(join(outer, '.env'), 'RONIN_T_OUTSIDE=1\n');
     writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages: []\n');
-    touched.push('KANBAN_T_OUTSIDE');
+    touched.push('RONIN_T_OUTSIDE');
 
     expect(loadDotEnv(root)).toBeUndefined();
-    expect(process.env.KANBAN_T_OUTSIDE).toBeUndefined();
+    expect(process.env.RONIN_T_OUTSIDE).toBeUndefined();
   });
 });

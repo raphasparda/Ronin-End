@@ -13,7 +13,7 @@ flowchart LR
   A -- "TLS (sslmode=require)<br/>conexão direta" --> N[("Neon<br/>PostgreSQL")]
 ```
 
-- **Mesma origem.** O navegador só fala com o Static Site. A regra de rewrite `/api/*` → `https://<ronin-api>.onrender.com/api/*` faz o Render buscar a resposta na API e devolvê-la na origem do Static Site. Assim valem, sem CORS: o cookie de sessão `__Host-kanban_sid` (`Secure`, sem `Domain`, `Path=/`), o `SameSite=Lax` e a checagem de CSRF por `Origin` igual a `APP_ORIGIN` ([`overview.md` §6.2 e §6.3](../architecture/overview.md#6-autenticação-sessão-e-csrf)).
+- **Mesma origem.** O navegador só fala com o Static Site. A regra de rewrite `/api/*` → `https://<ronin-api>.onrender.com/api/*` faz o Render buscar a resposta na API e devolvê-la na origem do Static Site. Assim valem, sem CORS: o cookie de sessão `__Host-ronin_sid` (`Secure`, sem `Domain`, `Path=/`), o `SameSite=Lax` e a checagem de CSRF por `Origin` igual a `APP_ORIGIN` ([`overview.md` §6.2 e §6.3](../architecture/overview.md#6-autenticação-sessão-e-csrf)).
 - **`APP_ORIGIN` é a URL do Static Site** (ou do domínio próprio ligado a ele), não a URL da API.
 - **A API também fica acessível direto** em `https://<ronin-api>.onrender.com`. Isso não abre a sessão (o cookie pertence à origem do Static Site) nem as mutações (o CSRF exige `Origin` igual a `APP_ORIGIN`), mas afeta o `TRUST_PROXY` (seção 7).
 - **Banco no Neon** por conexão **direta** (host sem `-pooler`). A API mantém um pool pequeno (`DATABASE_POOL_MAX=5`), e as migrations usam `pg_advisory_lock` de sessão, que não é confiável atrás de um pooler em modo transação.

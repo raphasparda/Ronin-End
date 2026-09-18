@@ -20,7 +20,7 @@ O cliente decidiu separar o monorepo (`apps/api`, `apps/web`, `packages/shared`)
 - **ronin-web consome o shared de dois jeitos**:
   - local (padrão): `"@raphasparda/ronin-shared": "link:../ronin-api/packages/shared"` (symlink para a fonte TS; mudanças no shared aparecem na hora no Vite, Vitest e `tsc`);
   - registro: `"@raphasparda/ronin-shared": "^0.1.0"` com `.npmrc` apontando o escopo para `https://npm.pkg.github.com` (`docs/ops/shared-package.md`).
-- **E2E** fica no ronin-web e sobe a API do repositório irmão (`RONIN_API_DIR`, padrão `../ronin-api`): usa `scripts/dev-db/postgres.mjs` do ronin-api para o banco `kanban_e2e`, `pnpm run db:migrate` e `tsx src/server.ts`. Portas 3100 (API) e 5320 (web).
+- **E2E** fica no ronin-web e sobe a API do repositório irmão (`RONIN_API_DIR`, padrão `../ronin-api`): usa `scripts/dev-db/postgres.mjs` do ronin-api para o banco `ronin_e2e`, `pnpm run db:migrate` e `tsx src/server.ts`. Portas 3100 (API) e 5320 (web).
 
 ## Por que `link:` e não `file:`
 
@@ -30,4 +30,4 @@ O cliente decidiu separar o monorepo (`apps/api`, `apps/web`, `packages/shared`)
 
 - Mudança de contrato atravessa dois PRs (ronin-api e ronin-web). Para o web em produção/CI via registro, a ordem é: publicar nova versão do shared, depois atualizar a versão no web.
 - O CI do ronin-web faz checkout do ronin-api (token de leitura se o repositório for privado).
-- O pacote se chama `@raphasparda/ronin-shared`: o GitHub Packages exige escopo igual ao dono dos repositórios (`raphasparda/Ronin-End` e `raphasparda/Ronin-front`). Se o dono mudar, renomear com `scripts/rename-shared-package.mjs` e publicar de novo. Os pacotes privados `@kanban/api` e `@kanban/web` mantêm o nome antigo (nunca são publicados).
+- O pacote se chama `@raphasparda/ronin-shared`: o GitHub Packages exige escopo igual ao dono dos repositórios (`raphasparda/Ronin-End` e `raphasparda/Ronin-front`). Se o dono mudar, renomear com `scripts/rename-shared-package.mjs` e publicar de novo. Os pacotes privados `@ronin/api` e `@ronin/web` mantêm o nome antigo (nunca são publicados).

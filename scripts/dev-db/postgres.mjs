@@ -6,7 +6,7 @@
 //   rodar elevado) e `pg_ctl stop -m fast` desliga de forma limpa. O `stop()` da própria lib usa
 //   `taskkill /f` no Windows e ela registra handlers globais de SIGINT, por isso não é usada.
 // - Dados em `.data/postgres` (gitignored), porta/usuário/senha vindos do `DATABASE_URL`
-//   (padrão `postgres://kanban:kanban@127.0.0.1:5433/kanban`), só em 127.0.0.1.
+//   (padrão `postgres://ronin:ronin@127.0.0.1:5433/ronin`), só em 127.0.0.1.
 //
 // Usado por `scripts/db-dev.mjs` (pnpm db:dev), `scripts/dev.mjs` (pnpm dev), pelo globalSetup
 // do Vitest da API e pelo `e2e/run.mjs` do repositório ronin-web (via RONIN_API_DIR). Essas
@@ -28,7 +28,7 @@ const LOG_FILE = join(ROOT, '.data', 'postgres.log');
 const PG_CTL_OUT = join(ROOT, '.data', 'pg_ctl.out');
 const OWNER_FILE = join(ROOT, '.data', 'postgres.owner.json');
 
-export const DEFAULT_DATABASE_URL = 'postgres://kanban:kanban@127.0.0.1:5433/kanban';
+export const DEFAULT_DATABASE_URL = 'postgres://ronin:ronin@127.0.0.1:5433/ronin';
 
 const rootRequire = createRequire(join(ROOT, 'package.json'));
 /** @type {typeof import('pg')} */
@@ -223,7 +223,7 @@ async function initCluster(bins, t, log) {
 }
 
 /**
- * Cria os bancos que faltarem (ex.: kanban, kanban_test).
+ * Cria os bancos que faltarem (ex.: ronin, ronin_test).
  * @param {ReturnType<typeof parseTarget>} t
  * @param {string[]} names
  */

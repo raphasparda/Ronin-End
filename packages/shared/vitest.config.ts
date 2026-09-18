@@ -11,7 +11,7 @@ export default defineConfig({
       reporter: ['text', 'html'],
       thresholds: {
         // DoD da tarefa 0.3: regras de domínio com cobertura >= 95%.
-        'src/domain/**': { statements: 95, branches: 95, functions: 95, lines: 95 },
+        'src/tools/kanban/domain/**': { statements: 95, branches: 95, functions: 95, lines: 95 },
       },
     },
   },
